@@ -15,7 +15,7 @@ from torchzq.utils import message_box
 
 
 class Runner():
-    def __init__(self, parser=None, name='default', batch_size=128, epochs=100, lr=1e-3, save_every=5):
+    def __init__(self, parser=None, name='default', batch_size=128, epochs=100, lr=1e-3, save_every=5, update_every=1):
         """args passed will be used as defaults.
         """
         parser = parser or argparse.ArgumentParser()
@@ -31,6 +31,7 @@ class Runner():
         parser.add_argument('--save-every', type=int, default=save_every)
         parser.add_argument('--continue', action='store_true')
         parser.add_argument('--test', action='store_true')
+        parser.add_argument('--update-every', type=int, default=update_every)
         args = parser.parse_args()
 
         args.continue_ = getattr(args, 'continue')
@@ -125,13 +126,14 @@ class Runner():
 
                 x = model(x)
                 loss = self.criterion(x, y)
+                (loss / args.update_every).backward()
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                if (self.step + 1) % args.update_every == 0:
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-                self.logger.log('loss', loss.item())
                 self.logger.log('step', self.step)
+                self.logger.log('loss', loss.item())
 
                 pbar.set_description(f'Epoch: {epoch}/{erange.stop}')
                 for i, item in enumerate(self.logger.render(['step', 'loss'])):
