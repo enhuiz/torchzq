@@ -89,12 +89,11 @@ class Runner():
     def monitor(self, x, y):
         pass
 
-    @staticmethod
-    def predict(x):
-        raise NotImplementedError
+    def predict(self, x):
+        return x
 
     @staticmethod
-    def evaluate(pd, gt):
+    def evaluate(fake, real):
         raise NotImplementedError
 
     @property
@@ -159,7 +158,8 @@ class Runner():
             real.append(y.cpu())
             with torch.no_grad():
                 x = model(x)
-            fake.append(self.predict(x).cpu())
+                x = self.predict(x)
+            fake.append(x.cpu())
 
         fake = torch.cat(fake, dim=0)
         real = torch.cat(real, dim=0)
