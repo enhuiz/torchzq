@@ -31,15 +31,17 @@ class Logger():
         self.recording = False
 
     def record(self):
-        self.entry['timestamp'] = time.time()
-        self.records.append(self.entry)
-        self.try_flush()
+        if self.entry:
+            self.entry['timestamp'] = time.time()
+            self.records.append(self.entry)
+            self.try_flush()
 
     def flush(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        df = pd.DataFrame(self.records)
-        df = df.sort_values('timestamp')
-        df.to_csv(self.path, index=None)
+        if len(self.records) > 0:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            df = pd.DataFrame(self.records)
+            df = df.sort_values('timestamp')
+            df.to_csv(self.path, index=None)
 
     def try_flush(self):
         if time.time() - self.last_flush_time > self.flush_interval:
