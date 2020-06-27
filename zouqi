@@ -1,0 +1,27 @@
+#!/bin/bash
+
+set -e
+
+runner=$1
+
+if [ -z $runner ]; then
+    echo Please give your runner.
+fi
+
+parse () {
+    yaml=$1
+    cat $yaml | sed -e 's/^/--/' | sed -e 's/://'
+}
+
+manual_opts=""
+config_opts=""
+
+for s in ${@:2}; do
+    if [ -z "${s##*.y*ml}" ]; then
+        config_opts="$config_opts $(parse $s)"
+    else
+        manual_opts="$manual_opts $s"
+    fi
+done
+
+$runner $manual_opts $config_opts
