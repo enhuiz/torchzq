@@ -31,12 +31,14 @@ class Logger():
         self.recording = False
 
     def record(self):
+        self.entry['timestamp'] = time.time()
         self.records.append(self.entry)
         self.try_flush()
 
     def flush(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         df = pd.DataFrame(self.records)
+        df = df.sort_values('timestamp')
         df.to_csv(self.path, index=None)
 
     def try_flush(self):
@@ -69,9 +71,19 @@ class Logger():
             v = f'{v:.3g}'
         return v
 
-    def render(self):
-        items = sorted(self.entry.items())
-        items = [f'{k}: {self.stringify(v)}' for k, v in items]
+    @staticmethod
+    def priortize(priority):
+        def priortizer(k):
+            try:
+                p = len(priority) - priority.index(k)
+            except:
+                p = 0
+            return '\0x00' * p + k
+        return priortizer
+
+    def render(self, priority):
+        keys = sorted(self.entry.keys(), key=self.priortize(priority))
+        items = [f'{k}: {self.stringify(self.entry[k])}' for k in keys]
         if self.recording:
             self.record()
         self.clear()

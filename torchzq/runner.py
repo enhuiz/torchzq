@@ -4,14 +4,14 @@ import tqdm
 import argparse
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from itertools import chain
+from collections import defaultdict
 from torch.utils.data import DataLoader
 
 from pathlib import Path
 
 from torchzq import checkpoint
 from torchzq.logger import Logger
+from torchzq.utils import message_box
 
 
 class Runner():
@@ -21,6 +21,7 @@ class Runner():
         parser = parser or argparse.ArgumentParser()
         parser.add_argument('command')
         parser.add_argument('--name', type=str, default=name)
+        parser.add_argument('--ckpt-dir', type=Path, default='ckpt')
         parser.add_argument('--lr', type=float, default=lr)
         parser.add_argument('--batch-size', type=int, default=batch_size)
         parser.add_argument('--epochs', type=int, default=epochs)
@@ -36,7 +37,9 @@ class Runner():
         delattr(args, 'continue')
 
         self.args = args
-        print(args)
+
+        msg = '\n'.join([f'{k}: {v}' for k, v in sorted(vars(args).items())])
+        print(message_box('Arguments', msg))
 
         self.logger = Logger(self.name)
         if args.command == 'train':
@@ -52,11 +55,15 @@ class Runner():
     def create_prepared_model(self):
         args = self.args
         model = self.create_model()
+        model.name = self.name
         if self.training:
             model = model.train()
         else:
             model = model.eval()
-        model = checkpoint.prepare(model, args.continue_, args.last_epoch)
+        model = checkpoint.prepare(model,
+                                   args.ckpt_dir,
+                                   args.continue_,
+                                   args.last_epoch)
         model = model.to(args.device)
         return model
 
@@ -74,7 +81,7 @@ class Runner():
         return dl
 
     def prepare_batch(self, batch):
-        raise NotImplementedError
+        return batch
 
     def criterion(self, x, y):
         raise NotImplementedError
@@ -97,6 +104,10 @@ class Runner():
     def run(self):
         eval(f'self.{self.args.command}()')
 
+    @staticmethod
+    def create_pline(*args, **kwargs):
+        return tqdm.tqdm(*args, **kwargs, bar_format='╰{postfix}', dynamic_ncols=True)
+
     def train(self):
         args = self.args
 
@@ -104,14 +115,13 @@ class Runner():
         model = self.create_prepared_model()
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-        ebar = tqdm.trange(model.last_epoch + 1,
-                           model.last_epoch + 1 + args.epochs)
-        for epoch in ebar:
-            ebar.set_description(f'Epoch: {epoch}')
-            self.iteration = epoch * len(dl)
-
-            bbar = tqdm.tqdm(dl)
-            for batch in bbar:
+        erange = range(model.last_epoch + 1,
+                       model.last_epoch + 1 + args.epochs)
+        plines = defaultdict(self.create_pline)
+        for epoch in erange:
+            self.step = epoch * len(dl)
+            pbar = tqdm.tqdm(dl, dynamic_ncols=True)
+            for batch in pbar:
                 x, y = self.prepare_batch(batch)
 
                 x = model(x)
@@ -122,13 +132,14 @@ class Runner():
                 optimizer.step()
 
                 self.logger.log('loss', loss.item())
-                self.logger.log('iteration', self.iteration)
+                self.logger.log('step', self.step)
 
-                desc = ', '.join(self.logger.render()).capitalize()
-                bbar.set_description(desc)
+                pbar.set_description(f'Epoch: {epoch}/{erange.stop}')
+                for i, item in enumerate(self.logger.render(['step', 'loss'])):
+                    plines[i].set_postfix_str(item)
 
                 self.monitor(x, y)
-                self.iteration += 1
+                self.step += 1
 
             if (epoch + 1) % args.save_every == 0:
                 model.save(epoch)
