@@ -53,7 +53,7 @@ class Runner():
     def create_model(self):
         raise NotImplementedError
 
-    def create_prepared_model(self):
+    def create_and_prepare_model(self):
         args = self.args
         model = self.create_model()
         model.name = self.name
@@ -112,7 +112,7 @@ class Runner():
         args = self.args
 
         dl = self.create_data_loader()
-        model = self.create_prepared_model()
+        model = self.create_and_prepare_model()
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
         erange = range(model.last_epoch + 1,
@@ -149,7 +149,7 @@ class Runner():
         args = self.args
 
         dl = self.create_data_loader()
-        model = self.create_prepared_model()
+        model = self.create_and_prepare_model()
 
         pbar = tqdm.tqdm(dl)
 
