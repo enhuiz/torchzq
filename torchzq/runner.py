@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 
 from torchzq import checkpoint
-from torchzq.logger import logger
+from torchzq.logger import Logger
 
 
 class Runner():
