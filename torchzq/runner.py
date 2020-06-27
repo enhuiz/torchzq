@@ -10,8 +10,8 @@ from torch.utils.data import DataLoader
 
 from pathlib import Path
 
-from torchrun import checkpoint
-from torchrun.logger import logger
+from torchzq import checkpoint
+from torchzq.logger import logger
 
 
 class Runner():
