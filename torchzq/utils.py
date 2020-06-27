@@ -1,4 +1,4 @@
-def message_box(title, content, width=None):
+def message_box(title, content, width=None, aligner='<'):
     width = width or max(map(len, [title, *content.splitlines()])) + 8
 
     nb = width - 2  # number of blanks
@@ -10,7 +10,7 @@ def message_box(title, content, width=None):
     out.append('├' + '─' * nb + '┤')
 
     for line in content.splitlines():
-        out.append(border.replace('^', '<').format(line.strip()))
+        out.append(border.replace('^', aligner).format(line.strip()))
 
     out.append('└' + '─' * nb + '┘')
 
