@@ -157,13 +157,10 @@ class Runner():
         real = []
         for batch in pbar:
             x, y = self.prepare_batch(batch)
-            real.append(y.cpu())
+            real += list(y)
             with torch.no_grad():
                 x = model(x)
                 x = self.predict(x)
-            fake.append(x.cpu())
-
-        fake = torch.cat(fake, dim=0)
-        real = torch.cat(real, dim=0)
+            fake += list(x)
 
         self.evaluate(fake, real)
