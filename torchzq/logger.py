@@ -88,3 +88,7 @@ class Logger():
             self.record()
         self.clear()
         return items
+
+    def __del__(self):
+        if self.recording:
+            self.flush()
