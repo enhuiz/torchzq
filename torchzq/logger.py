@@ -9,13 +9,15 @@ class Logger():
     def __init__(self, name, dir='logs', flush_interval=5):
         self.name = name
         self.dir = dir
-        self.flush_interval = flush_interval
 
+        self.flush_interval = flush_interval
         self.last_flush_time = 0
 
         self.entry = {}
         self.records = []
         self.load()
+
+        self.disable_recording()
 
     def load(self):
         try:
