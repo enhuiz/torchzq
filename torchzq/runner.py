@@ -21,7 +21,6 @@ class Runner():
         parser = parser or argparse.ArgumentParser()
         parser.add_argument('command')
         parser.add_argument('--name', type=str, default=name)
-        parser.add_argument('--ckpt-dir', type=Path, default='ckpt')
         parser.add_argument('--lr', type=float, default=lr)
         parser.add_argument('--batch-size', type=int, default=batch_size)
         parser.add_argument('--epochs', type=int, default=epochs)
@@ -32,6 +31,9 @@ class Runner():
         parser.add_argument('--continue', action='store_true')
         parser.add_argument('--test', action='store_true')
         parser.add_argument('--update-every', type=int, default=update_every)
+        parser.add_argument('--ckpt-dir', type=Path, default='ckpt')
+        parser.add_argument('--log-dir', type=Path, default='logs')
+        parser.add_argument('--disable-recording', action='store_true')
         args = parser.parse_args()
 
         args.continue_ = getattr(args, 'continue')
@@ -42,13 +44,22 @@ class Runner():
         msg = '\n'.join([f'{k}: {v}' for k, v in sorted(vars(args).items())])
         print(message_box('Arguments', msg))
 
-        self.logger = Logger(self.name)
-        if args.command == 'train':
-            self.logger.enable_recording()
+        self.logger = Logger(self.name, Path(args.log_dir, self.command))
+
+        if args.disable_recording:
+            self.logger.disable_recording()
 
     @property
     def name(self):
         return self.args.name
+
+    @property
+    def command(self):
+        return self.args.command
+
+    @property
+    def training(self):
+        return self.command == 'train'
 
     def create_model(self):
         raise NotImplementedError
@@ -97,10 +108,6 @@ class Runner():
     def evaluate(fake, real):
         raise NotImplementedError
 
-    @property
-    def training(self):
-        return self.args.command == 'train'
-
     def run(self):
         eval(f'self.{self.args.command}()')
 
@@ -118,6 +125,7 @@ class Runner():
         erange = range(model.last_epoch + 1,
                        model.last_epoch + 1 + args.epochs)
         plines = defaultdict(self.create_pline)
+
         for epoch in erange:
             self.step = epoch * len(dl)
             pbar = tqdm.tqdm(dl, dynamic_ncols=True)
