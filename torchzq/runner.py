@@ -44,7 +44,10 @@ class Runner():
         msg = '\n'.join([f'{k}: {v}' for k, v in sorted(vars(args).items())])
         print(message_box('Arguments', msg))
 
-        self.logger = Logger(self.name, Path(args.log_dir, self.command))
+        self.logger = Logger(Path(args.log_dir,
+                                  self.name,
+                                  self.command)
+                             .with_suffix('.csv'))
 
         if args.disable_recording:
             self.logger.disable_recording()
@@ -168,7 +171,10 @@ class Runner():
             real += list(y)
             with torch.no_grad():
                 x = model(x)
-                x = self.predict(x)
-            fake += list(x)
+                loss = self.criterion(x, y)
+                fake += list(self.predict(x))
+            self.logger.log('loss', loss.item())
+            pbar.set_description(', '.join(self.logger.render()).capitalize())
+        print(f'Average loss: {self.logger.data_frame["loss"].mean():.3g}')
 
         self.evaluate(fake, real)
