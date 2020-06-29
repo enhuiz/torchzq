@@ -17,7 +17,7 @@ class Logger():
         self.records = []
         self.load()
 
-        self.disable_recording()
+        self.enable_recording()
 
     def load(self):
         try:
