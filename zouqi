@@ -10,7 +10,7 @@ fi
 
 parse () {
     yaml=$1
-    cat $yaml | sed -e 's/^/--/' | sed -e 's/://'
+    cat $yaml | sed -r '/^\s*$/d' | sed -e 's/^/--/' | sed -e 's/://'
 }
 
 manual_opts=""
@@ -24,4 +24,4 @@ for s in ${@:2}; do
     fi
 done
 
-$runner $manual_opts $config_opts
+$runner $config_opts $manual_opts
