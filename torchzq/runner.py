@@ -4,6 +4,7 @@ import tqdm
 import argparse
 import torch
 import torch.nn as nn
+import shutil
 from collections import defaultdict
 from torch.utils.data import DataLoader
 
@@ -41,14 +42,10 @@ class Runner():
 
         self.args = args
 
-        msg = '\n'.join([f'{k}: {v}' for k, v in sorted(vars(args).items())])
-        print(message_box('Arguments', msg))
+        lines = [f'{k}: {v}' for k, v in sorted(vars(args).items())]
+        print(message_box('Arguments', '\n'.join(lines)))
 
-        self.logger = Logger(Path(args.log_dir,
-                                  self.name,
-                                  self.command)
-                             .with_suffix('.csv'))
-
+        self.logger = Logger(Path(args.log_dir, self.name, self.command))
         if args.disable_recording:
             self.logger.disable_recording()
 
@@ -76,7 +73,7 @@ class Runner():
         else:
             model = model.eval()
         model = checkpoint.prepare(model,
-                                   args.ckpt_dir,
+                                   Path(args.ckpt_dir, self.name),
                                    args.continue_,
                                    args.last_epoch)
         model = model.to(args.device)
@@ -92,7 +89,7 @@ class Runner():
                         num_workers=args.nj,
                         batch_size=args.batch_size,
                         collate_fn=getattr(self, 'collate_fn', None))
-        print('Dataset:', len(ds))
+        print('Dataset size:', len(ds))
         return dl
 
     def prepare_batch(self, batch):
@@ -112,7 +109,7 @@ class Runner():
         raise NotImplementedError
 
     def run(self):
-        eval(f'self.{self.args.command}()')
+        eval(f'self.{self.command}()')
 
     @staticmethod
     def create_pline(*args, **kwargs):
@@ -175,6 +172,33 @@ class Runner():
                 fake += list(self.predict(x))
             self.logger.log('loss', loss.item())
             pbar.set_description(', '.join(self.logger.render()).capitalize())
-        print(f'Average loss: {self.logger.data_frame["loss"].mean():.3g}')
+        print(f'Average loss: {self.logger.to_frame()["loss"].mean():.3g}')
 
         self.evaluate(fake, real)
+
+    @staticmethod
+    def try_rmtree(path):
+        if path.exists():
+            shutil.rmtree(path)
+            print(str(path), 'removed.')
+
+    @staticmethod
+    def try_move(source, target):
+        if source.exists():
+            target.parent.mkdir(exist_ok=True, parents=True)
+            shutil.move(source, target)
+            print(str(source), 'is moved to', str(target))
+
+    def clear(self):
+        if input('Are you sure to clear? (y)\n').lower() == 'y':
+            self.try_rmtree(Path(self.args.ckpt_dir, self.name))
+            self.try_rmtree(Path(self.args.log_dir, self.name))
+        else:
+            print(f'Not cleared.')
+
+    def rename(self):
+        new_name = input('Please give a new name:\n')
+        self.try_move(Path(self.args.ckpt_dir, self.name),
+                      Path(self.args.ckpt_dir, new_name))
+        self.try_move(Path(self.args.log_dir, self.name),
+                      Path(self.args.log_dir, new_name))

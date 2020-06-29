@@ -5,28 +5,32 @@ from pathlib import Path
 from collections import defaultdict
 
 
+class Timer():
+    def __init__(self, interval):
+        self.interval = interval
+        self.restart()
+
+    def restart(self):
+        self.start_time = time.time()
+
+    def timeup(self):
+        return time.time() - self.start_time > self.interval
+
+
 class Logger():
-    def __init__(self, path, flush_interval=5):
-        assert path.suffix == '.csv'
-
-        self.path = path
-        self.flush_interval = flush_interval
-        self.last_flush_time = 0
-
+    def __init__(self, dir, flush_interval=10):
+        self.dir = dir
+        self.timer = Timer(flush_interval)
         self.entry = {}
-        self.records = []
-        self.load()
-
+        self.entries = []
         self.enable_recording()
 
-    def load(self):
-        try:
-            df = pd.read_csv(self.path)
-            self.records = df.to_dict('record')
-        except:
-            self.records = []
+    @property
+    def path(self):
+        return Path(self.dir, str(self.recording_start_time)).with_suffix('.csv')
 
     def enable_recording(self):
+        self.recording_start_time = int(time.time())
         self.recording = True
 
     def disable_recording(self):
@@ -35,23 +39,22 @@ class Logger():
     def record(self):
         if self.entry:
             self.entry['timestamp'] = time.time()
-            self.records.append(self.entry)
+            self.entries.append(self.entry)
             self.try_flush()
 
     def flush(self):
-        if len(self.records) > 0:
+        if len(self.entries) > 0:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            df = self.data_frame
+            df = self.to_frame()
             df.to_csv(self.path, index=None)
 
     def try_flush(self):
-        if time.time() - self.last_flush_time > self.flush_interval:
+        if self.timer.timeup():
             self.flush()
-            self.last_flush_time = time.time()
+            self.timer.restart()
 
-    @property
-    def data_frame(self):
-        df = pd.DataFrame(self.records)
+    def to_frame(self):
+        df = pd.DataFrame(self.entries)
         df = df.sort_values('timestamp')
         return df
 

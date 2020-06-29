@@ -2,10 +2,9 @@ import torch
 from pathlib import Path
 
 
-def prepare(model, dir='ckpt', continue_=False, last_epoch=None):
+def prepare(model, ckpt_dir, continue_=False, last_epoch=None):
     """Prepare a model for checkpoints.
     """
-    ckpt_dir = Path(dir, model.name)
     ckpts = list(ckpt_dir.glob('*.pth'))
 
     if model.training:
