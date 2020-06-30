@@ -16,7 +16,7 @@ from torchzq.utils import message_box
 
 
 class Runner():
-    def __init__(self, parser=None, name='default', batch_size=128, epochs=100, lr=1e-3, save_every=5, update_every=1):
+    def __init__(self, parser=None, name='unnamed', batch_size=128, epochs=100, lr=1e-3, save_every=5, update_every=1):
         """args passed will be used as defaults.
         """
         parser = parser or argparse.ArgumentParser()
