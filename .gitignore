@@ -1,3 +1,4 @@
 *.swp
 ckpt
 logs
+example/example.yml

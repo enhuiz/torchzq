@@ -64,6 +64,12 @@ class Runner(torchzq.Runner):
                 ])),
                 batch_size=args.test_batch_size, shuffle=True)
 
+    def prepare_batch(self, batch):
+        x, y = batch
+        x = x.to(self.args.device)
+        y = y.to(self.args.device)
+        return x, y
+
     def predict(self, x):
         return x.argmax(dim=-1)
 
@@ -71,6 +77,8 @@ class Runner(torchzq.Runner):
         return F.nll_loss(x, y)
 
     def evaluate(self, x, y):
+        x = torch.stack(x)
+        y = torch.stack(y)
         correct = (x == y).sum()
         print('Test set: Accuracy: {}/{} ({:.0f}%)'.format(
             correct, len(y), 100. * correct / len(y)))

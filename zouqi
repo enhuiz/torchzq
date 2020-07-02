@@ -2,26 +2,25 @@
 
 set -e
 
-runner=$1
-
-if [ -z $runner ]; then
-    echo Please give your runner.
-fi
-
-parse () {
-    yaml=$1
-    cat $yaml | sed -r '/^\s*$/d' | sed -e 's/^/--/' | sed -e 's/://'
+parse_yaml () {
+    cat $1 | sed '/^runner/d' | sed -r '/^\s*$/d' | sed -e 's/^/--/' | sed -e 's/://'
 }
 
-manual_opts=""
 config_opts=""
+manual_opts=""
+runner=""
 
-for s in ${@:2}; do
+for s in ${@}; do
     if [ -z "${s##*.y*ml}" ]; then
-        config_opts="$config_opts $(parse $s)"
+        config_opts="$config_opts $(parse_yaml $s)"
+        runner=$(cat $s | grep -oP 'runner: \K.+')
     else
         manual_opts="$manual_opts $s"
     fi
 done
+
+if [ -z $runner ]; then
+    echo No runner detected, please specify a runner in the config file.
+fi
 
 $runner $config_opts $manual_opts
