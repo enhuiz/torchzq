@@ -9,11 +9,16 @@ parse_yaml () {
 config_opts=""
 manual_opts=""
 runner=""
+name=""
 
 for s in ${@}; do
     if [ -z "${s##*.y*ml}" ]; then
         config_opts="$config_opts $(parse_yaml $s)"
-        runner=$(cat $s | grep -oP 'runner: \K.+')
+        runner=$(cat $s | grep -oP "runner: \K.+")
+        name=$(cat $s | grep -oP "name: \K.+" || true)
+        if [ -z $name ]; then
+            name=$(basename "${s%.*}")
+        fi
     else
         manual_opts="$manual_opts $s"
     fi
@@ -23,4 +28,4 @@ if [ -z $runner ]; then
     echo No runner detected, please specify a runner in the config file.
 fi
 
-$runner $config_opts $manual_opts
+$runner $config_opts --name $name $manual_opts
