@@ -3,7 +3,7 @@
 set -e
 
 parse_yaml () {
-    cat $1 | sed '/^runner/d' | sed 's/#.+$//g' | sed -r '/^\s*$/d' | sed -e 's/^/--/' | sed -e 's/://'
+    cat $1 | sed '/^runner/d' | sed -r 's/#.+$//g' | sed -r '/^\s*$/d' | sed -e 's/^/--/' | sed -e 's/://'
 }
 
 config_opts=""
