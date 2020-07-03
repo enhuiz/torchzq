@@ -122,7 +122,11 @@ class Runner:
         raise NotImplementedError
 
     def run(self):
-        eval(f"self.{self.command}()")
+        func = getattr(self, self.command, None)
+        if func is None:
+            print(f"Command '{self.command}' does not exist.")
+        else:
+            func()
 
     @staticmethod
     def create_pline(*args, **kwargs):
