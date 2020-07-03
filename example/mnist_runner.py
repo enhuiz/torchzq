@@ -40,8 +40,8 @@ class Net(nn.Module):
 class Runner(torchzq.Runner):
     def __init__(self):
         parser = argparse.ArgumentParser(description=__doc__)
-        parser.add_argument('--test-batch-size', default=1000)
-        super().__init__(parser, 'mnist', save_every=1, epochs=10)
+        parser.add_argument("--test-batch-size", default=1000)
+        super().__init__(parser, "mnist", save_every=1, epochs=10)
 
     def create_model(self):
         return Net()
@@ -50,19 +50,35 @@ class Runner(torchzq.Runner):
         args = self.args
         if self.training:
             return torch.utils.data.DataLoader(
-                datasets.MNIST('../data', train=True, download=True,
-                               transform=transforms.Compose([
-                                   transforms.ToTensor(),
-                                   transforms.Normalize((0.1307,), (0.3081,))
-                               ])),
-                batch_size=args.batch_size, shuffle=True)
+                datasets.MNIST(
+                    "../data",
+                    train=True,
+                    download=True,
+                    transform=transforms.Compose(
+                        [
+                            transforms.ToTensor(),
+                            transforms.Normalize((0.1307,), (0.3081,)),
+                        ]
+                    ),
+                ),
+                batch_size=args.batch_size,
+                shuffle=True,
+            )
         else:
             return torch.utils.data.DataLoader(
-                datasets.MNIST('../data', train=False, transform=transforms.Compose([
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.1307,), (0.3081,))
-                ])),
-                batch_size=args.test_batch_size, shuffle=True)
+                datasets.MNIST(
+                    "../data",
+                    train=False,
+                    transform=transforms.Compose(
+                        [
+                            transforms.ToTensor(),
+                            transforms.Normalize((0.1307,), (0.3081,)),
+                        ]
+                    ),
+                ),
+                batch_size=args.test_batch_size,
+                shuffle=True,
+            )
 
     def prepare_batch(self, batch):
         x, y = batch
@@ -80,8 +96,11 @@ class Runner(torchzq.Runner):
         x = torch.stack(x)
         y = torch.stack(y)
         correct = (x == y).sum()
-        print('Test set: Accuracy: {}/{} ({:.0f}%)'.format(
-            correct, len(y), 100. * correct / len(y)))
+        print(
+            "Test set: Accuracy: {}/{} ({:.0f}%)".format(
+                correct, len(y), 100.0 * correct / len(y)
+            )
+        )
 
 
 if __name__ == "__main__":

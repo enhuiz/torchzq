@@ -5,7 +5,7 @@ from pathlib import Path
 from collections import defaultdict
 
 
-class Timer():
+class Timer:
     def __init__(self, interval):
         self.interval = interval
         self.restart()
@@ -17,7 +17,7 @@ class Timer():
         return time.time() - self.start_time > self.interval
 
 
-class Logger():
+class Logger:
     def __init__(self, dir, flush_interval=10):
         self.dir = dir
         self.timer = Timer(flush_interval)
@@ -27,7 +27,7 @@ class Logger():
 
     @property
     def path(self):
-        return Path(self.dir, str(self.recording_start_time)).with_suffix('.csv')
+        return Path(self.dir, str(self.recording_start_time)).with_suffix(".csv")
 
     def enable_recording(self):
         self.recording_start_time = int(time.time())
@@ -38,7 +38,7 @@ class Logger():
 
     def record(self):
         if self.entry:
-            self.entry['timestamp'] = time.time()
+            self.entry["timestamp"] = time.time()
             self.entries.append(self.entry)
             self.try_flush()
 
@@ -55,7 +55,7 @@ class Logger():
 
     def to_frame(self):
         df = pd.DataFrame(self.entries)
-        df = df.sort_values('timestamp')
+        df = df.sort_values("timestamp")
         return df
 
     def log(self, k, v):
@@ -76,7 +76,7 @@ class Logger():
     @staticmethod
     def stringify(v):
         if type(v) is float:
-            v = f'{v:.3g}'
+            v = f"{v:.3g}"
         return v
 
     @staticmethod
@@ -86,12 +86,13 @@ class Logger():
                 p = len(priority) - priority.index(k)
             except:
                 p = 0
-            return '\0x00' * p + k
+            return "\0x00" * p + k
+
         return priortizer
 
     def render(self, priority=[]):
         keys = sorted(self.entry.keys(), key=self.priortize(priority))
-        items = [f'{k}: {self.stringify(self.entry[k])}' for k in keys]
+        items = [f"{k}: {self.stringify(self.entry[k])}" for k in keys]
         if self.recording:
             self.record()
         self.clear()
