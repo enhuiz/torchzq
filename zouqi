@@ -13,6 +13,10 @@ name=""
 
 for s in ${@}; do
     if [ -z "${s##*.y*ml}" ]; then
+        if [ ! -f $s ]; then
+            echo $s does not exist, please check your input.
+            exit 1
+        fi
         config_opts="$config_opts $(parse_yaml $s)"
         runner=$(cat $s | grep -oP "runner: \K.+")
         name=$(cat $s | grep -oP "name: \K.+" || true)
