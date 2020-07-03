@@ -30,6 +30,7 @@ done
 
 if [ -z $runner ]; then
     echo No runner detected, please specify a runner in the config file.
+    exit 1
 fi
 
 $runner $config_opts --name $name $manual_opts
