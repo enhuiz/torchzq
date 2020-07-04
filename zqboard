@@ -22,15 +22,18 @@ with tempfile.TemporaryDirectory() as tmpdir:
         name = str(name)
         for path in grp["path"]:
             df = pd.read_csv(path)
+            df = df.sort_values("timestamp")
             rows = df.to_dict("records")
             for row in rows:
-                step = None
-                timestamp = time.time()
-                if "step" in row:
+                try:
                     step = row["step"]
-                if "timestamp" in row:
-                    timestamp = row["timestamp"]
+                except:
+                    step = None
+                timestamp = row["timestamp"]
                 for key in set(row) - {"timestamp", "step"}:
                     tag = "/".join([name, key])
-                    writer.add_scalar(tag, row[key], step, timestamp)
+                    try:
+                        writer.add_scalar(tag, row[key], step, timestamp)
+                    except:
+                        pass
     os.system(f"tensorboard --logdir {tmpdir}")
