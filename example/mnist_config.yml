@@ -1,4 +1,3 @@
-default: example/default_config.yml
+default: [example/default_config.yml, example/default_config.yml]
 name: mnist
 runner: example/mnist_runner.py
-epoch: 1

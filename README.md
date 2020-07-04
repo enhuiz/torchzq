@@ -21,6 +21,8 @@ $ zouqi example/config/mnist.yml
 
 ## Supported Features
 
-- [x] Model checkpoints
-- [x] Logging
-- [x] Gradient accumulation
+  - [x] Model checkpoints
+  - [x] Logging
+  - [x] Gradient accumulation
+  - [x] Configuration file
+  - [x] Configuration file inheritance
