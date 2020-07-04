@@ -191,8 +191,8 @@ class Runner:
 
         pbar = tqdm.tqdm(dl)
 
-        fake = []
-        real = []
+        fake, real = [], []
+        plines = defaultdict(self.create_pline)
         for batch in pbar:
             x, y = self.prepare_batch(batch)
             real += list(y)
@@ -201,7 +201,9 @@ class Runner:
                 loss = self.criterion(x, y)
                 fake += list(self.predict(x))
             self.logger.log("loss", loss.item())
-            pbar.set_description(", ".join(self.logger.render()).capitalize())
+            for i, item in enumerate(self.logger.render(["loss"])):
+                plines[i].set_postfix_str(item)
+
         print(f'Average loss: {self.logger.to_frame()["loss"].mean():.3g}')
 
         self.evaluate(fake, real)
