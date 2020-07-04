@@ -8,6 +8,6 @@ setup(
     author="enhuiz",
     author_email="niuzhe.nz@outlook.com",
     packages=["torchzq"],
-    scripts=["zouqi"],
-    install_requires=["torch"],
+    scripts=["zouqi", "zqboard"],
+    install_requires=["torch", "tensorboardX", "tensorboard"],
 )
