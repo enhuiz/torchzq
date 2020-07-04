@@ -105,6 +105,13 @@ class Runner:
         print("Dataset size:", len(ds))
         return dl
 
+    def create_optimizer(self, parameters):
+        args = self.args
+        return torch.optim.Adam(parameters, lr=args.lr)
+
+    def create_scheduler(self, optimizer):
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 1)
+
     def prepare_batch(self, batch):
         return batch
 
@@ -137,14 +144,16 @@ class Runner:
 
         dl = self.create_data_loader()
         model = self.create_and_prepare_model()
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        optimizer = self.create_optimizer(model.parameters())
+        scheduler = self.create_scheduler(optimizer)
 
         erange = range(model.last_epoch + 1, model.last_epoch + 1 + args.epochs)
         plines = defaultdict(self.create_pline)
 
         for epoch in erange:
-            self.step = epoch * len(dl)
+            self.step = (epoch - 1) * len(dl)
             pbar = tqdm.tqdm(dl, dynamic_ncols=True)
+
             for batch in pbar:
                 x, y = self.prepare_batch(batch)
 
@@ -157,16 +166,18 @@ class Runner:
                     optimizer.zero_grad()
 
                 self.logger.log("step", self.step)
+                self.logger.log("lr", scheduler.get_last_lr()[0])
                 self.logger.log("loss", loss.item())
 
                 pbar.set_description(f"Epoch: {epoch}/{erange.stop}")
-                for i, item in enumerate(self.logger.render(["step", "loss"])):
+                for i, item in enumerate(self.logger.render(["step", "lr", "loss"])):
                     plines[i].set_postfix_str(item)
 
+                scheduler.step()
                 self.monitor(x, y)
                 self.step += 1
 
-            if (epoch + 1) % args.save_every == 0:
+            if epoch % args.save_every == 0:
                 model.save(epoch)
 
     def test(self):
