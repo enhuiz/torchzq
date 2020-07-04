@@ -171,7 +171,7 @@ class Runner:
                 self.logger.log("lr", scheduler.get_last_lr()[0])
                 self.logger.log("loss", loss.item())
 
-                pbar.set_description(f"Epoch: {epoch}/{erange.stop - 1}")
+                pbar.set_description(f"Epoch: {epoch}/{erange.stop}")
                 for i, item in enumerate(self.logger.render(["step", "lr", "loss"])):
                     plines[i].set_postfix_str(item)
 
