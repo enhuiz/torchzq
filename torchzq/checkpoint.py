@@ -28,7 +28,7 @@ def prepare(model, ckpt_dir, continue_=False, last_epoch=None):
             print(e)
             print(f"{ckpt} loading failed, start from scratch.")
     else:
-        last_epoch = 0
+        last_epoch = -1
 
     model.last_epoch = last_epoch
 

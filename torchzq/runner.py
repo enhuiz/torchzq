@@ -107,9 +107,11 @@ class Runner:
 
     def create_optimizer(self, parameters):
         args = self.args
-        return torch.optim.Adam(parameters, lr=args.lr)
+        return torch.optim.Adam(
+            [{"params": parameters, "initial_lr": args.lr}], lr=args.lr
+        )
 
-    def create_scheduler(self, optimizer):
+    def create_scheduler(self, optimizer, epoch):
         return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 1)
 
     def prepare_batch(self, batch):
@@ -145,13 +147,13 @@ class Runner:
         dl = self.create_data_loader()
         model = self.create_and_prepare_model()
         optimizer = self.create_optimizer(model.parameters())
-        scheduler = self.create_scheduler(optimizer)
+        scheduler = self.create_scheduler(optimizer, model.last_epoch)
 
         erange = range(model.last_epoch + 1, model.last_epoch + 1 + args.epochs)
         plines = defaultdict(self.create_pline)
 
         for epoch in erange:
-            self.step = (epoch - 1) * len(dl)
+            self.step = epoch * len(dl)
             pbar = tqdm.tqdm(dl, dynamic_ncols=True)
 
             for batch in pbar:
@@ -173,11 +175,12 @@ class Runner:
                 for i, item in enumerate(self.logger.render(["step", "lr", "loss"])):
                     plines[i].set_postfix_str(item)
 
-                scheduler.step()
                 self.monitor(x, y)
                 self.step += 1
 
-            if epoch % args.save_every == 0:
+            scheduler.step()
+
+            if (epoch + 1) % args.save_every == 0:
                 model.save(epoch)
 
     def test(self):
