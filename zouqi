@@ -32,8 +32,16 @@ parse_recursively() {
         parse_recursively ${dfile%,}
     done
 
-    name=$(cat $file | getkey name)
-    runner=$(cat $file | getkey runner)
+    local name_tmp=$(cat $file | getkey name)
+    if [ ! -z $name_tmp ]; then
+        name=$name_tmp
+    fi
+
+    local runner_tmp=$(cat $file | getkey runner)
+    if [ ! -z $runner_tmp ]; then
+        runner=$runner_tmp
+    fi
+
     config_opts="$config_opts $(parse_opts $file)"
 
     if [ -z $name ]; then
