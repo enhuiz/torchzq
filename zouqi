@@ -2,27 +2,49 @@
 
 set -e
 
-parse_yaml () {
-    cat $1 | sed '/^runner/d' | sed -r 's/#.+$//g' | sed -r '/^\s*$/d' | sed -e 's/^/--/' | sed -e 's/://'
-}
-
+name=""
+runner=""
 config_opts=""
 manual_opts=""
-runner=""
-name=""
+
+getkey() {
+    cat | grep -oP "$1: \K.+" || true
+}
+
+delkey() {
+    cat | sed "/^$1/d"
+}
+
+parse_opts() {
+    cat $1 | delkey runner | delkey name | delkey default | sed -r 's/#.+$//g' | sed -r '/^\s*$/d' | sed -e 's/^/--/' | sed -e 's/://'
+}
+
+parse_recursively() {
+    local file=$1
+
+    if [ ! -f $file ]; then
+        echo $file does not exist.
+        exit 1
+    fi
+
+    local dfiles=$(cat $file | getkey default | tr -d '[]')
+    for dfile in ${dfiles}; do
+        parse_recursively ${dfile%,}
+    done
+
+    name=$(cat $file | getkey name)
+    runner=$(cat $file | getkey runner)
+    config_opts="$config_opts $(parse_opts $file)"
+
+    if [ -z $name ]; then
+        name=$(basename "${s%.*}")
+    fi
+}
+
 
 for s in ${@}; do
     if [ -z "${s##*.y*ml}" ]; then
-        if [ ! -f $s ]; then
-            echo $s does not exist, please check your input.
-            exit 1
-        fi
-        config_opts="$config_opts $(parse_yaml $s)"
-        runner=$(cat $s | grep -oP "runner: \K.+")
-        name=$(cat $s | grep -oP "name: \K.+" || true)
-        if [ -z $name ]; then
-            name=$(basename "${s%.*}")
-        fi
+        parse_recursively $s
     else
         manual_opts="$manual_opts $s"
     fi
