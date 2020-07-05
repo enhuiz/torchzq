@@ -178,6 +178,8 @@ class Runner:
                 self.monitor(x, y)
                 self.step += 1
 
+            print("\n" * (len(plines) - 1))
+
             scheduler.step()
 
             if (epoch + 1) % args.save_every == 0:
@@ -203,6 +205,8 @@ class Runner:
             self.logger.log("loss", loss.item())
             for i, item in enumerate(self.logger.render(["loss"])):
                 plines[i].set_postfix_str(item)
+
+        print("\n" * (len(plines) - 1))
 
         print(f'Average loss: {self.logger.to_frame()["loss"].mean():.3g}')
 
