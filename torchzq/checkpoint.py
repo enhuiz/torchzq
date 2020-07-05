@@ -16,10 +16,10 @@ def prepare(model, ckpt_dir, continue_=False, last_epoch=None):
         exit()
 
     if last_epoch is not None:
-        ckpts = [Path(ckpt_dir, f"{last_epoch:06d}.pth")]
+        ckpts = [Path(ckpt_dir, f"{last_epoch}.pth")]
 
     if ckpts:
-        ckpt = max(ckpts)
+        ckpt = max(ckpts, key=lambda p: int(p.stem))
         last_epoch = int(ckpt.stem)
         try:
             model.load_state_dict(torch.load(ckpt))
@@ -36,7 +36,7 @@ def prepare(model, ckpt_dir, continue_=False, last_epoch=None):
 
         def save(epoch):
             ckpt_dir.mkdir(parents=True, exist_ok=True)
-            ckpt = Path(ckpt_dir, f"{epoch:06d}.pth")
+            ckpt = Path(ckpt_dir, f"{epoch}.pth")
             torch.save(model.state_dict(), ckpt)
             print(f"{ckpt} saved.")
 
