@@ -10,10 +10,10 @@ from pathlib import Path
 from tensorboardX import SummaryWriter
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--logdir", default=".")
-args = parser.parse_args()
+parser.add_argument("--logdir", type=Path, default=".")
+args, unk_args = parser.parse_known_args()
 
-paths = sorted(Path(".").rglob("*/**/*.csv"))
+paths = sorted(args.logdir.rglob("*/**/*.csv"))
 pdf = pd.DataFrame(paths, columns=["path"])
 pdf["dir"] = pdf["path"].apply(lambda p: p.parent)
 
@@ -36,4 +36,4 @@ with tempfile.TemporaryDirectory() as tmpdir:
                         writer.add_scalar(key, row[key], step, timestamp)
                     except:
                         pass
-    os.system(f"tensorboard --logdir {tmpdir}")
+    os.system(f"tensorboard --logdir {tmpdir} {' '.join(unk_args)}")
