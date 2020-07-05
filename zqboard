@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import tqdm
 import os
 import time
 import argparse
@@ -12,28 +13,27 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--logdir", default=".")
 args = parser.parse_args()
 
-paths = sorted(Path(".").rglob("*.csv"))
+paths = sorted(Path(".").rglob("*/**/*.csv"))
 pdf = pd.DataFrame(paths, columns=["path"])
 pdf["dir"] = pdf["path"].apply(lambda p: p.parent)
 
 with tempfile.TemporaryDirectory() as tmpdir:
-    writer = SummaryWriter(tmpdir)
-    for name, grp in pdf.groupby("dir"):
-        name = str(name)
+    pbar = tqdm.tqdm(pdf.groupby("dir"))
+    for name, grp in pbar:
+        pbar.set_description(f"Preprocessing {name}")
+        writer = SummaryWriter(Path(tmpdir, name))
         for path in grp["path"]:
             df = pd.read_csv(path)
             df = df.sort_values("timestamp")
             rows = df.to_dict("records")
             for row in rows:
-                try:
+                step = None
+                if "step" in row:
                     step = row["step"]
-                except:
-                    step = None
                 timestamp = row["timestamp"]
                 for key in set(row) - {"timestamp", "step"}:
-                    tag = "/".join([name, key])
                     try:
-                        writer.add_scalar(tag, row[key], step, timestamp)
+                        writer.add_scalar(key, row[key], step, timestamp)
                     except:
                         pass
     os.system(f"tensorboard --logdir {tmpdir}")
