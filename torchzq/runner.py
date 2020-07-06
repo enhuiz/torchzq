@@ -195,15 +195,16 @@ class Runner:
 
         fake, real = [], []
         plines = defaultdict(self.create_pline)
-        for batch in pbar:
+        for step, batch in enumerate(pbar):
             x, y = self.prepare_batch(batch)
             real += list(y)
             with torch.no_grad():
                 x = model(x)
                 loss = self.criterion(x, y)
                 fake += list(self.predict(x))
+            self.logger.log("step", step)
             self.logger.log("loss", loss.item())
-            for i, item in enumerate(self.logger.render(["loss"])):
+            for i, item in enumerate(self.logger.render(["step", "loss"])):
                 plines[i].set_postfix_str(item)
 
         print("\n" * (len(plines) - 1))
