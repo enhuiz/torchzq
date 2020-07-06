@@ -105,10 +105,10 @@ class Runner:
         print("Dataset size:", len(ds))
         return dl
 
-    def create_optimizer(self, parameters):
+    def create_optimizer(self, model):
         args = self.args
         return torch.optim.Adam(
-            [{"params": parameters, "initial_lr": args.lr}], lr=args.lr
+            [{"params": model.parameters(), "initial_lr": args.lr}], lr=args.lr
         )
 
     def create_scheduler(self, optimizer, epoch):
@@ -146,7 +146,7 @@ class Runner:
 
         dl = self.create_data_loader()
         model = self.create_and_prepare_model()
-        optimizer = self.create_optimizer(model.parameters())
+        optimizer = self.create_optimizer(model)
         scheduler = self.create_scheduler(optimizer, model.last_epoch)
 
         erange = range(model.last_epoch + 1, model.last_epoch + 1 + args.epochs)
