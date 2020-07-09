@@ -12,11 +12,11 @@ getkey() {
 }
 
 delkey() {
-    cat | sed "/^$1/d"
+    cat | sed "/^$1:/d"
 }
 
 parse_opts() {
-    cat $1 | delkey runner | delkey name | delkey default | sed -r 's/#.+$//g' | sed -r '/^\s*$/d' | sed -e 's/^/--/' | sed -e 's/://'
+    cat $1 | delkey runner | delkey name | delkey default | sed -r 's/#.+$//g' | sed -r '/^\s*$/d' | sed -e 's/^/--/' | sed -e 's/://' | tr '\n' ' '
 }
 
 parse_recursively() {
@@ -63,4 +63,4 @@ if [ -z $runner ]; then
     exit 1
 fi
 
-$runner $config_opts --name $name $manual_opts
+bash -c "$runner $config_opts --name $name $manual_opts"
