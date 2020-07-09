@@ -153,7 +153,9 @@ class Runner:
         plines = defaultdict(self.create_pline)
 
         for epoch in erange:
+            self.epoch = epoch
             self.step = epoch * len(dl)
+
             pbar = tqdm.tqdm(dl, dynamic_ncols=True)
 
             for batch in pbar:
