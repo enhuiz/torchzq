@@ -42,11 +42,14 @@ class Logger:
             self.entries.append(self.entry)
             self.try_flush()
 
+    def dump(self, path):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.to_frame().to_csv(path, index=None)
+
     def flush(self):
         if len(self.entries) > 0:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            df = self.to_frame()
-            df.to_csv(self.path, index=None)
+            self.dump(self.path)
 
     def try_flush(self):
         if self.timer.timeup():
@@ -55,7 +58,8 @@ class Logger:
 
     def to_frame(self):
         df = pd.DataFrame(self.entries)
-        df = df.sort_values("timestamp")
+        if len(df) > 0:
+            df = df.sort_values("timestamp")
         return df
 
     def log(self, k, v):
