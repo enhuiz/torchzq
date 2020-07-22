@@ -5,6 +5,12 @@
 ## Installation
 
 ```
+pip install git+https://github.com/enhuiz/torchzq
+```
+
+or
+
+```
 $ git clone https://github.com/enhuiz/torchzq
 $ cd torchzq
 $ pip install .
