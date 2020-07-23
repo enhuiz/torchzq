@@ -13,6 +13,9 @@ from pathlib import Path
 from torchzq import checkpoint
 from torchzq.logger import Logger
 from torchzq.utils import message_box
+from torchzq.parsing import union, lambda_
+
+from torch.optim.lr_scheduler import LambdaLR
 
 
 class Runner:
@@ -31,7 +34,7 @@ class Runner:
         parser = parser or argparse.ArgumentParser()
         parser.add_argument("command")
         parser.add_argument("--name", type=str, default=name)
-        parser.add_argument("--lr", type=float, default=lr)
+        parser.add_argument("--lr", type=union(float, lambda_), default=lr)
         parser.add_argument("--batch-size", type=int, default=batch_size)
         parser.add_argument("--epochs", type=int, default=epochs)
         parser.add_argument("--nj", type=int, default=os.cpu_count())
@@ -107,12 +110,13 @@ class Runner:
 
     def create_optimizer(self, model):
         args = self.args
-        return torch.optim.Adam(
-            [{"params": model.parameters(), "initial_lr": args.lr}], lr=args.lr
-        )
+        return torch.optim.Adam([{"params": model.parameters(), "initial_lr": 1}], lr=1)
 
     def create_scheduler(self, optimizer, epoch):
-        return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 1)
+        args = self.args
+        if isinstance(args.lr, float):
+            return LambdaLR(optimizer, lambda _: args.lr, epoch)
+        return LambdaLR(optimizer, args.lr, epoch)
 
     def prepare_batch(self, batch):
         return batch

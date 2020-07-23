@@ -1,3 +1,6 @@
+import types
+
+
 def listof(type_):
     return lambda s: list(map(type_, s.split(",")))
 
@@ -21,3 +24,16 @@ def union(*types):
         raise TypeError(s)
 
     return loader
+
+
+class lambda_:
+    def __init__(self, literal):
+        self.literal = literal
+        self.func = eval(literal)
+        assert isinstance(self.func, types.LambdaType)
+
+    def __call__(self, *args, **kwargs):
+        return self.func(*args, **kwargs)
+
+    def __str__(self):
+        return self.literal
