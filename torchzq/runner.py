@@ -1,10 +1,10 @@
 import os
-import numpy as np
 import tqdm
+import shutil
 import argparse
+import numpy as np
 import torch
 import torch.nn as nn
-import shutil
 from collections import defaultdict
 from torch.utils.data import DataLoader
 
@@ -104,6 +104,7 @@ class Runner:
             num_workers=args.nj,
             batch_size=args.batch_size,
             collate_fn=getattr(self, "collate_fn", None),
+            worker_init_fn=getattr(self, "worker_init_fn", None),
         )
         print("Dataset size:", len(ds))
         return dl
@@ -126,6 +127,9 @@ class Runner:
 
     def monitor(self, x, y):
         pass
+
+    def feed(self, model, x):
+        return model(x)
 
     def predict(self, x):
         return x
@@ -156,16 +160,14 @@ class Runner:
         erange = range(model.last_epoch + 1, model.last_epoch + 1 + args.epochs)
         plines = defaultdict(self.create_pline)
 
-        for epoch in erange:
-            self.epoch = epoch
-            self.step = epoch * len(dl)
-
+        for self.epoch in erange:
+            self.step = self.epoch * len(dl)
             pbar = tqdm.tqdm(dl, dynamic_ncols=True)
 
-            for batch in pbar:
-                x, y = self.prepare_batch(batch)
+            for self.batch in pbar:
+                x, y = self.prepare_batch(self.batch)
 
-                x = model(x)
+                x = self.feed(model, x)
                 loss = self.criterion(x, y)
                 (loss / args.update_every).backward()
 
@@ -177,7 +179,7 @@ class Runner:
                 self.logger.log("lr", scheduler.get_last_lr()[0])
                 self.logger.log("loss", loss.item())
 
-                pbar.set_description(f"Epoch: {epoch}/{erange.stop}")
+                pbar.set_description(f"Epoch: {self.epoch}/{erange.stop}")
                 for i, item in enumerate(self.logger.render(["step", "lr", "loss"])):
                     plines[i].set_postfix_str(item)
 
@@ -188,8 +190,8 @@ class Runner:
 
             scheduler.step()
 
-            if (epoch + 1) % args.save_every == 0:
-                model.save(epoch)
+            if (self.epoch + 1) % args.save_every == 0:
+                model.save(self.epoch)
 
     def test(self):
         args = self.args
@@ -205,7 +207,7 @@ class Runner:
             x, y = self.prepare_batch(batch)
             real += list(y)
             with torch.no_grad():
-                x = model(x)
+                x = self.feed(model, x)
                 loss = self.criterion(x, y)
                 fake += list(self.predict(x))
             self.logger.log("step", step)
