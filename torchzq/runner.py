@@ -2,20 +2,19 @@ import os
 import tqdm
 import shutil
 import argparse
+import inspect
 import numpy as np
 import torch
 import torch.nn as nn
 from collections import defaultdict
 from torch.utils.data import DataLoader
-
 from pathlib import Path
+from torch.optim.lr_scheduler import LambdaLR
 
 from torchzq import checkpoint
 from torchzq.logger import Logger
 from torchzq.utils import message_box
-from torchzq.parsing import union, lambda_
-
-from torch.optim.lr_scheduler import LambdaLR
+from torchzq.parsing import union, lambda_, str2bool
 
 
 class Runner:
@@ -45,7 +44,7 @@ class Runner:
         parser.add_argument("--update-every", type=int, default=update_every)
         parser.add_argument("--ckpt-dir", type=Path, default="ckpt")
         parser.add_argument("--log-dir", type=Path, default="logs")
-        parser.add_argument("--disable-recording", action="store_true")
+        parser.add_argument("--recording", type=str2bool, default=True)
         args = parser.parse_args()
 
         args.continue_ = getattr(args, "continue")
@@ -57,7 +56,8 @@ class Runner:
         print(message_box("Arguments", "\n".join(lines)))
 
         self.logger = Logger(Path(args.log_dir, self.name, self.command))
-        if args.disable_recording:
+
+        if not args.recording:
             self.logger.disable_recording()
 
     @property
@@ -71,6 +71,17 @@ class Runner:
     @property
     def training(self):
         return self.command == "train"
+
+    def autofeed(self, callable, override={}, rename={}):
+        keys = [
+            rename[key] if key in rename else key
+            for key in inspect.signature(callable).parameters
+        ]
+        values = [
+            override[key] if key in override else getattr(self.args, key)
+            for key in keys
+        ]
+        return callable(**dict(zip(keys, values)))
 
     def create_model(self):
         raise NotImplementedError
@@ -134,8 +145,7 @@ class Runner:
     def predict(self, x):
         return x
 
-    @staticmethod
-    def evaluate(fake, real):
+    def evaluate(self, fake, real):
         raise NotImplementedError
 
     def run(self):
