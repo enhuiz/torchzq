@@ -21,7 +21,7 @@ class Runner:
     def __init__(
         self,
         parser=None,
-        name="unnamed",
+        name="Unnamed",
         batch_size=128,
         epochs=100,
         lr=1e-3,
@@ -57,7 +57,8 @@ class Runner:
         print(message_box("Arguments", "\n".join(lines)))
 
         self.logger = Logger(
-            Path(args.log_dir, self.name, self.command) if args.recording else None
+            dir=Path(args.log_dir, self.name, self.command) if args.recording else None,
+            sma_windows={r"(\S+_)?loss": 200},
         )
 
     @property
@@ -201,7 +202,7 @@ class Runner:
                 self.logger.log("loss", loss.item())
 
                 pbar.set_description(f"Epoch: {self.epoch}/{erange.stop}")
-                items = self.logger.render(["step", "lr", "loss"], {"loss": 200})
+                items = self.logger.render(["step", "lr", "loss"])
                 for i, item in enumerate(items):
                     plines[i].set_postfix_str(item)
 
@@ -234,7 +235,7 @@ class Runner:
                 fake += list(self.predict(x))
             self.logger.log("step", step)
             self.logger.log("loss", loss.item())
-            items = self.logger.render(["step", "loss"], {"loss": 200})
+            items = self.logger.render(["step", "loss"])
             for i, item in enumerate(items):
                 plines[i].set_postfix_str(item)
 
@@ -250,25 +251,9 @@ class Runner:
             shutil.rmtree(path)
             print(str(path), "removed.")
 
-    @staticmethod
-    def try_move(source, target):
-        if source.exists():
-            target.parent.mkdir(exist_ok=True, parents=True)
-            shutil.move(source, target)
-            print(str(source), "is moved to", str(target))
-
     def clear(self):
         if input("Are you sure to clear? (y)\n").lower() == "y":
             self.try_rmtree(Path(self.args.ckpt_dir, self.name))
             self.try_rmtree(Path(self.args.log_dir, self.name))
         else:
             print(f"Not cleared.")
-
-    def rename(self):
-        new_name = input("Please give a new name:\n")
-        self.try_move(
-            Path(self.args.ckpt_dir, self.name), Path(self.args.ckpt_dir, new_name)
-        )
-        self.try_move(
-            Path(self.args.log_dir, self.name), Path(self.args.log_dir, new_name)
-        )

@@ -1,3 +1,4 @@
+import re
 import time
 import torch
 import pandas as pd
@@ -34,10 +35,11 @@ def throttle(func, seconds):
 
 
 class Logger:
-    def __init__(self, dir, dump_interval=10):
+    def __init__(self, dir, dump_interval=10, sma_windows={}):
         self.path = None if dir is None else self.create_path(dir)
-        self.records = [{}]
         self.throttled_dump = throttle(self.dump, dump_interval)
+        self.sma_windows = sma_windows
+        self.records = [{}]
 
     @staticmethod
     def create_path(dir):
@@ -82,12 +84,16 @@ class Logger:
             if key in record:
                 yield record[key]
 
-    def render(self, priority=[], moving_average_windows={}):
-        moving_average_windows = defaultdict(lambda: 1, moving_average_windows)
+    def sma_window(self, key):
+        for pattern in self.sma_windows:
+            if re.match(pattern, key) is not None:
+                return self.sma_windows[pattern]
+        return 1
 
+    def render(self, priority=[]):
         mean = lambda l: sum(l) / len(l) if len(l) > 1 else l[0]
         getval = lambda key: mean(
-            list(islice(self.column(key, reverse=True), moving_average_windows[key]))
+            list(islice(self.column(key, reverse=True), self.sma_window(key)))
         )
 
         ordered_keys = sorted(self.record, key=self.create_priortizer(priority))
@@ -101,7 +107,7 @@ class Logger:
 
     def dump(self, path=None):
         path = path or self.path
-        records = [record for record in self.records if record]
+        records = [record for record in self.records if "timestamp" in record]
         if path is not None and records:
             path = Path(path)
             path.parent.mkdir(parents=True, exist_ok=True)
