@@ -56,10 +56,9 @@ class Runner:
         lines = [f"{k}: {v}" for k, v in sorted(vars(args).items())]
         print(message_box("Arguments", "\n".join(lines)))
 
-        self.logger = Logger(Path(args.log_dir, self.name, self.command))
-
-        if not args.recording:
-            self.logger.disable_recording()
+        self.logger = Logger(
+            Path(args.log_dir, self.name, self.command) if args.recording else None
+        )
 
     @property
     def name(self):
@@ -202,7 +201,8 @@ class Runner:
                 self.logger.log("loss", loss.item())
 
                 pbar.set_description(f"Epoch: {self.epoch}/{erange.stop}")
-                for i, item in enumerate(self.logger.render(["step", "lr", "loss"])):
+                items = self.logger.render(["step", "lr", "loss"], {"loss": 200})
+                for i, item in enumerate(items):
                     plines[i].set_postfix_str(item)
 
                 self.monitor(x, y)
@@ -234,12 +234,13 @@ class Runner:
                 fake += list(self.predict(x))
             self.logger.log("step", step)
             self.logger.log("loss", loss.item())
-            for i, item in enumerate(self.logger.render(["step", "loss"])):
+            items = self.logger.render(["step", "loss"], {"loss": 200})
+            for i, item in enumerate(items):
                 plines[i].set_postfix_str(item)
 
         print("\n" * (len(plines) - 1))
 
-        print(f'Average loss: {self.logger.to_frame()["loss"].mean():.3g}')
+        print(f'Average loss: {np.mean(list(self.logger.column("loss"))):.3g}')
 
         self.evaluate(fake, real)
 
