@@ -2,10 +2,10 @@
 
 set -e
 
-name=""
-runner=""
-config_opts=""
-manual_opts=""
+normalize() {
+    # | remove comments | remove trailing spaces | remove empty lines
+    cat | sed -r 's/#.+$//g' | sed -r 's/\s*$//g' | sed -r '/^\s*$/d'
+}
 
 getkey() {
     cat | grep -oP "$1: \K.+" || true
@@ -15,52 +15,66 @@ delkey() {
     cat | sed "/^$1:/d"
 }
 
-parse_opts() {
-    cat $1 | delkey runner | delkey name | delkey default | sed -r 's/#.+$//g' | sed -r '/^\s*$/d' | sed -e 's/^/--/' | sed -e 's/://' | tr '\n' ' '
+read_opts() {
+    cat | delkey runner | delkey name | delkey default | sed -e 's/^/--/' | sed -e 's/://' | tr '\n' ' '
 }
 
-parse_recursively() {
-    local file=$1
+zouqi() {
+    name=""
+    runner=""
+    config_opts=""
 
-    if [ ! -f $file ]; then
-        echo $file does not exist.
+    parse_recursively() {
+        local file=$1
+
+        if [ ! -f $file ]; then
+            echo $file does not exist.
+            exit 1
+        fi
+
+        local yaml=$(cat $file | normalize)
+
+        local dfiles=$(echo "$yaml" | getkey default | tr -d '[]')
+        for dfile in ${dfiles}; do
+            parse_recursively ${dfile%,}
+        done
+
+        local name_tmp=$(echo "$yaml" | getkey name)
+        if [ ! -z $name_tmp ]; then
+            name=$name_tmp
+        fi
+
+        local runner_tmp=$(echo "$yaml" | getkey runner)
+        if [ ! -z $runner_tmp ]; then
+            runner=$runner_tmp
+        fi
+
+        config_opts="$config_opts $(echo "$yaml" | read_opts)"
+
+        if [ -z $name ]; then
+            name=$(basename "${s%.*}")
+        fi
+    }
+
+    parse_recursively $1
+
+    if [ -z $runner ]; then
+        echo No runner detected in the configs, please specify a runner in the config file.
         exit 1
     fi
 
-    local dfiles=$(cat $file | getkey default | tr -d '[]')
-    for dfile in ${dfiles}; do
-        parse_recursively ${dfile%,}
-    done
-
-    local name_tmp=$(cat $file | getkey name)
-    if [ ! -z $name_tmp ]; then
-        name=$name_tmp
-    fi
-
-    local runner_tmp=$(cat $file | getkey runner)
-    if [ ! -z $runner_tmp ]; then
-        runner=$runner_tmp
-    fi
-
-    config_opts="$config_opts $(parse_opts $file)"
-
-    if [ -z $name ]; then
-        name=$(basename "${s%.*}")
-    fi
+    cmd="$runner $config_opts --name $name ${@:2}"
+    bash -c "$cmd"
 }
 
-
-for s in ${@}; do
-    if [ -z "${s##*.y*ml}" ]; then
-        parse_recursively $s
-    else
-        manual_opts="$manual_opts $s"
-    fi
-done
-
-if [ -z $runner ]; then
-    echo No runner detected, please specify a runner in the config file.
-    exit 1
-fi
-
-bash -c "$runner $config_opts --name $name $manual_opts"
+case "$1" in
+*.y*ml)
+    zouqi "$@"
+    ;;
+board)
+    zqboard "${@:2}"
+    ;;
+*)
+    echo "Error: Unknown command: \"$1\"."
+    ;;
+esac
