@@ -34,6 +34,7 @@ class Runner:
         parser.add_argument("command")
         parser.add_argument("--name", type=str, default=name)
         parser.add_argument("--lr", type=union(float, lambda_), default=lr)
+        parser.add_argument("--weight-decay", type=float, default=0)
         parser.add_argument("--batch-size", type=int, default=batch_size)
         parser.add_argument("--epochs", type=int, default=epochs)
         parser.add_argument("--nj", type=int, default=os.cpu_count())
@@ -72,16 +73,23 @@ class Runner:
     def training(self):
         return self.command == "train"
 
-    def autofeed(self, callable, override={}, rename={}):
-        keys = [
-            rename[key] if key in rename else key
-            for key in inspect.signature(callable).parameters
-        ]
-        values = [
-            override[key] if key in override else getattr(self.args, key)
-            for key in keys
-        ]
-        return callable(**dict(zip(keys, values)))
+    def autofeed(self, callable, override={}, mapping={}):
+        """Priority: 1. override, 2. parsed args 3. parameters' default
+        """
+        parameters = inspect.signature(callable).parameters
+
+        def mapped(key):
+            return mapping[key] if key in mapping else key
+
+        def default(key):
+            return parameters[key].default
+
+        def getval(key):
+            if key in override:
+                return override[key]
+            return getattr(self.args, mapped(key), default(key))
+
+        return callable(**{key: getval(key) for key in parameters})
 
     def create_model(self):
         raise NotImplementedError
@@ -96,7 +104,10 @@ class Runner:
             model = model.eval()
 
         model = checkpoint.prepare(
-            model, Path(args.ckpt_dir, self.name), args.continue_, args.last_epoch
+            model=model,
+            ckpt_dir=Path(args.ckpt_dir, self.name),
+            continue_=args.continue_,
+            last_epoch=args.last_epoch,
         )
 
         model = model.to(args.device)
@@ -108,21 +119,22 @@ class Runner:
 
     def create_data_loader(self):
         args = self.args
-        ds = self.create_dataset()
-        dl = DataLoader(
-            ds,
-            shuffle=self.training,
-            num_workers=args.nj,
-            batch_size=args.batch_size,
-            collate_fn=getattr(self, "collate_fn", None),
-            worker_init_fn=getattr(self, "worker_init_fn", None),
+        dl = self.autofeed(
+            DataLoader,
+            override=dict(
+                dataset=self.create_dataset(),
+                shuffle=self.training,
+                collate_fn=getattr(self, "collate_fn", None),
+                worker_init_fn=getattr(self, "worker_init_fn", None),
+            ),
+            mapping=dict(num_workers="nj"),
         )
-        print("Dataset size:", len(ds))
+        print("Dataset size:", len(dl.dataset))
         return dl
 
     def create_optimizer(self, model):
-        args = self.args
-        return torch.optim.Adam([{"params": model.parameters(), "initial_lr": 1}], lr=1)
+        params = [{"params": model.parameters(), "initial_lr": 1}]
+        return self.autofeed(torch.optim.Adam, dict(params=params, lr=1))
 
     def create_scheduler(self, optimizer, epoch):
         args = self.args
