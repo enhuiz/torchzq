@@ -135,11 +135,11 @@ class Runner:
         params = [{"params": model.parameters(), "initial_lr": 1}]
         return self.autofeed(torch.optim.Adam, dict(params=params, lr=1))
 
-    def create_scheduler(self, optimizer, epoch):
+    def create_scheduler(self, optimizer, lr_lambda, last_epoch):
         args = self.args
-        if isinstance(args.lr, float):
-            return LambdaLR(optimizer, lambda _: args.lr, epoch)
-        return LambdaLR(optimizer, args.lr, epoch)
+        if isinstance(lr_lambda, float):
+            return LambdaLR(optimizer, lambda _: lr_lambda, last_epoch)
+        return LambdaLR(optimizer, lr_lambda, last_epoch)
 
     def prepare_batch(self, batch):
         return batch
@@ -176,7 +176,7 @@ class Runner:
         dl = self.create_data_loader()
         model = self.create_and_prepare_model()
         optimizer = self.create_optimizer(model)
-        scheduler = self.create_scheduler(optimizer, model.last_epoch)
+        scheduler = self.create_scheduler(optimizer, args.lr, model.last_epoch)
 
         erange = range(model.last_epoch + 1, model.last_epoch + 1 + args.epochs)
         plines = defaultdict(self.create_pline)
