@@ -1,4 +1,18 @@
 import types
+import operator
+
+
+def ignore_future_arguments(parser, *ignored):
+    call = parser.add_argument
+
+    def add_argument(*args, **kwargs):
+        name = args[0]
+        if name not in ignored:
+            call(name, *args[1:], **kwargs)
+
+    parser.add_argument = add_argument
+
+    return parser
 
 
 def listof(type_):
