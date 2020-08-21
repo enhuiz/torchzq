@@ -79,16 +79,16 @@ class Logger:
             value = f"{value:.3g}"
         return value
 
-    @staticmethod
-    def create_priortizer(priority):
-        def prioritizer(key):
-            try:
-                p = len(priority) - priority.index(key)
-            except:
-                p = 0
-            return "\0x00" * p + key
+    def priortize(self, l, priority):
+        def helper(pair):
+            i, s = pair
+            p = len(l) - i
+            for j, pattern in enumerate(priority):
+                if re.match(pattern, s) is not None:
+                    p = len(l) + len(priority) - j
+            return "\0x00" * p + s
 
-        return prioritizer
+        return map(operator.itemgetter(1), sorted(enumerate(l), key=helper))
 
     @property
     def record(self):
@@ -115,7 +115,7 @@ class Logger:
             list(islice(self.column(key, reverse=True), self.sma_window(key)))
         )
 
-        ordered_keys = sorted(self.record, key=self.create_priortizer(priority))
+        ordered_keys = self.priortize(self.record.keys(), priority)
         items = [f"{key}: {self.prettify(getval(key))}" for key in ordered_keys]
 
         self.log("timestamp", time.time())
