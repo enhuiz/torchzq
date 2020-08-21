@@ -12,9 +12,8 @@ from pathlib import Path
 from torch.optim.lr_scheduler import LambdaLR
 
 from torchzq import checkpoint
-from torchzq.logger import Logger
-from torchzq.utils import message_box
 from torchzq.parsing import union, lambda_, str2bool
+from torchzq.logging import Logger, message_box
 
 
 class Runner:
