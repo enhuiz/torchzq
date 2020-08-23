@@ -16,7 +16,7 @@ from torchzq.parsing import union, lambda_, str2bool
 from torchzq.logging import Logger, message_box
 
 
-class Runner:
+class BaseRunner(object):
     def __init__(
         self,
         parser=None,

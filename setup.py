@@ -7,7 +7,7 @@ setup(
     description="TorchZQ: A simple PyTorch experiment runner.",
     author="enhuiz",
     author_email="niuzhe.nz@outlook.com",
-    packages=["torchzq"],
+    packages=["torchzq", "torchzq/runners"],
     scripts=["zouqi", "zqboard"],
     install_requires=["torch", "tensorboardX", "tensorboard"],
 )

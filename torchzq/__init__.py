@@ -1,1 +1,1 @@
-from .runner import Runner
+from .runners import BaseRunner as Runner, GANRunner

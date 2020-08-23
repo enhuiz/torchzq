@@ -48,3 +48,4 @@ $ zqboard --logdir .
 - [x] Configuration file
 - [x] Configuration file inheritance
 - [x] TensorBoard
+- [x] (c)GAN training
