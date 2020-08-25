@@ -37,7 +37,7 @@ class Net(nn.Module):
         return output
 
 
-class Runner(torchzq.Runner):
+class Runner(torchzq.LegacyRunner):
     def __init__(self):
         parser = argparse.ArgumentParser(description=__doc__)
         parser.add_argument("--test-batch-size", default=1000)

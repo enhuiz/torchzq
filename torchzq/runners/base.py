@@ -57,7 +57,7 @@ class BaseRunner(object):
 
         self.logger = Logger(
             dir=Path(args.log_dir, self.name, self.command) if args.recording else None,
-            sma_windows={r"(\S+_)?loss": 200},
+            sma_windows={r"(\S+_)?loss(\S+_)?": 200},
         )
 
     @property
@@ -118,7 +118,7 @@ class BaseRunner(object):
 
     def create_data_loader(self):
         args = self.args
-        dl = self.autofeed(
+        loader = self.autofeed(
             DataLoader,
             override=dict(
                 dataset=self.create_dataset(),
@@ -128,36 +128,25 @@ class BaseRunner(object):
             ),
             mapping=dict(num_workers="nj"),
         )
-        print("Dataset size:", len(dl.dataset))
-        return dl
+        print("Dataset size:", len(loader.dataset))
+        return loader
 
-    def create_optimizer(self, model):
+    def create_optimizer_impl(self, model):
         params = [{"params": model.parameters(), "initial_lr": 1}]
         return self.autofeed(torch.optim.Adam, dict(params=params, lr=1))
 
-    def create_scheduler(self, optimizer, lr_lambda, last_epoch):
-        args = self.args
-        if isinstance(lr_lambda, float):
-            return LambdaLR(optimizer, lambda _: lr_lambda, last_epoch)
-        return LambdaLR(optimizer, lr_lambda, last_epoch)
+    def create_scheduler_impl(self, optimizer, lr, last_epoch):
+        if isinstance(lr, float):
+            return LambdaLR(optimizer, lambda _: lr, last_epoch)
+        return LambdaLR(optimizer, lr, last_epoch)
 
-    def prepare_batch(self, batch):
-        return batch
+    def create_optimizer(self):
+        return self.create_optimizer_impl(self.model)
 
-    def criterion(self, x, y):
-        raise NotImplementedError
-
-    def monitor(self, x, y):
-        pass
-
-    def feed(self, model, x):
-        return model(x)
-
-    def predict(self, x):
-        return x
-
-    def evaluate(self, fakes, reals):
-        raise NotImplementedError
+    def create_scheduler(self):
+        return self.create_scheduler_impl(
+            self.optimizer, self.args.lr, self.model.last_epoch
+        )
 
     def run(self):
         func = getattr(self, self.command, None)
@@ -166,85 +155,65 @@ class BaseRunner(object):
         else:
             func()
 
-    @staticmethod
-    def create_pline(*args, **kwargs):
-        return tqdm.tqdm(*args, **kwargs, bar_format="╰{postfix}", dynamic_ncols=True)
+    def update(self, batch):
+        raise NotImplementedError
+
+    def prepare_train(self):
+        self.loader = self.create_data_loader()
+        self.model = self.create_and_prepare_model()
+        self.optimizer = self.create_optimizer()
+        self.scheduler = self.create_scheduler()
+
+    def create_pbar(self):
+        pbar = tqdm.tqdm(self.loader, dynamic_ncols=True)
+        pbar.lines = defaultdict(lambda: tqdm.tqdm(bar_format="╰{postfix}"))
+        close = pbar.close
+
+        def close_all():
+            close()
+            for line in pbar.lines.values():
+                line.close()
+
+        pbar.close = close_all
+
+        return pbar
+
+    def prepare_batch(self, batch):
+        raise NotImplementedError
 
     def train(self):
         args = self.args
-
-        dl = self.create_data_loader()
-        model = self.create_and_prepare_model()
-        optimizer = self.create_optimizer(model)
-        scheduler = self.create_scheduler(optimizer, args.lr, model.last_epoch)
-
-        erange = range(model.last_epoch + 1, model.last_epoch + 1 + args.epochs)
-        plines = defaultdict(self.create_pline)
-
-        for self.epoch in erange:
-            self.step = self.epoch * len(dl)
-            pbar = tqdm.tqdm(dl, dynamic_ncols=True)
-
-            for self.batch in pbar:
-                x, y = self.prepare_batch(self.batch)
-
-                x = self.feed(model, x)
-                loss = self.criterion(x, y)
-                (loss / args.update_every).backward()
-
-                if (self.step + 1) % args.update_every == 0:
-                    optimizer.step()
-                    optimizer.zero_grad()
-
+        self.prepare_train()
+        epoch_start = self.model.last_epoch + 1
+        epoch_stop = self.model.last_epoch + 1 + args.epochs
+        for self.epoch in range(epoch_start, epoch_stop):
+            pbar = self.create_pbar()
+            pbar.set_description(f"Epoch: {self.epoch}/{epoch_stop}")
+            for self.step, batch in enumerate(pbar, self.epoch * len(self.loader)):
                 self.logger.log("step", self.step)
-                self.logger.log("lr", scheduler.get_last_lr()[0])
-                self.logger.log("loss", loss.item())
+                batch = self.prepare_batch(batch)
+                self.update(batch)
+                for i, item in enumerate(self.logger.render(["step"])):
+                    pbar.lines[i].set_postfix_str(item)
+            self.scheduler.step()
+            if (self.epoch + 1) % self.args.save_every == 0:
+                self.model.save(self.epoch)
+        pbar.close()
 
-                pbar.set_description(f"Epoch: {self.epoch}/{erange.stop}")
-                items = self.logger.render(["step", "lr", "loss"])
-                for i, item in enumerate(items):
-                    plines[i].set_postfix_str(item)
-
-                self.monitor(x, y)
-                self.step += 1
-
-            print("\n" * (len(plines) - 1))
-
-            scheduler.step()
-
-            if (self.epoch + 1) % args.save_every == 0:
-                model.save(self.epoch)
+    def prepare_test(self):
+        self.loader = self.create_data_loader()
+        self.model = self.create_and_prepare_model()
 
     def test(self):
-        args = self.args
-
-        dl = self.create_data_loader()
-        model = self.create_and_prepare_model()
-
-        pbar = tqdm.tqdm(dl)
-
-        fakes, reals = [], []
-
-        plines = defaultdict(self.create_pline)
-
-        for step, batch in enumerate(pbar):
-            x, y = self.prepare_batch(batch)
-            reals += list(y)
-            with torch.no_grad():
-                x = self.feed(model, x)
-                loss = self.criterion(x, y)
-                fakes += list(self.predict(x))
-            self.logger.log("step", step)
-            self.logger.log("loss", loss.item())
-            items = self.logger.render(["step", "loss"])
-            for i, item in enumerate(items):
-                plines[i].set_postfix_str(item)
-
-        print("\n" * (len(plines) - 1))
-
-        print(f'Average loss: {np.mean(list(self.logger.column("loss"))):.3g}')
-
-        self.evaluate(fakes, reals)
+        self.prepare_test()
+        pbar = self.create_pbar()
+        for self.step, batch in enumerate(pbar):
+            self.logger.log("step", self.step)
+            batch = self.prepare_batch(batch)
+            self.update(batch)
+            for i, item in enumerate(self.logger.render(["step"])):
+                pbar.lines[i].set_postfix_str(item)
+        pbar.close()
 
     @staticmethod
     def try_rmtree(path):
