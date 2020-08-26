@@ -27,6 +27,7 @@ def prepare(model, ckpt_dir, continue_=False, last_epoch=None):
         except Exception as e:
             print(e)
             print(f"{ckpt} loading failed, start from scratch.")
+            last_epoch = -1
     else:
         last_epoch = -1
 
