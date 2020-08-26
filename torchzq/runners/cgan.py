@@ -17,8 +17,10 @@ from torchzq.parsing import union, optional, lambda_, ignore_future_arguments
 class CGANRunner(GANRunner):
     def __init__(self, parser=None, **kwargs):
         parser = parser or argparse.ArgumentParser()
-        parser.add_argument("--plr-weight", type=float, default=1)
+        parser.add_argument("--plr-weight", type=float, default=0.01)
         parser.add_argument("--plr-decay", type=float, default=0.99)
+        parser.add_argument("--plr-start", type=float, default=5000)
+        parser.add_argument("--plr-every", type=float, default=32)
         super().__init__(parser, **kwargs)
 
     def plr_loss(self, styles, images):
@@ -58,11 +60,17 @@ class CGANRunner(GANRunner):
         raise NotImplementedError
 
     def g_criterion(self, batch):
+        args = self.args
         fake, style = self.g_feed(batch, return_style=True)
         with nullcontext() if self.training else torch.no_grad():
             fake_output = self.d_feed(fake, batch)
 
+        if self.step >= args.plr_start and self.step % args.plr_every == 0:
+            plr_loss = self.plr_loss(style, fake)
+        else:
+            plr_loss = torch.zeros([])
+
         return {
             "g_fake_loss": fake_output.mean(),
-            "g_plr_loss": self.plr_loss(style, fake),
+            "g_plr_loss": plr_loss,
         }
