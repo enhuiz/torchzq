@@ -49,4 +49,4 @@ $ zqboard --logdir .
 - [x] Configuration file inheritance
 - [x] TensorBoard
 - [x] (c)GAN training (WGAN-GP)
-- [x] fp16
+- [x] FP16
