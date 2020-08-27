@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 from torch.optim.lr_scheduler import LambdaLR
 
-from torchzq import checkpoint
+from torchzq.checkpoint import Checkpoint
 from torchzq.parsing import union, lambda_, str2bool
 from torchzq.logging import Logger, message_box
 
@@ -45,12 +45,17 @@ class BaseRunner(object):
         parser.add_argument("--ckpt-dir", type=Path, default="ckpt")
         parser.add_argument("--log-dir", type=Path, default="logs")
         parser.add_argument("--recording", type=str2bool, default=True)
+        parser.add_argument("--fp16", type=str2bool, default=False)
         args = parser.parse_args()
 
         args.continue_ = getattr(args, "continue")
         delattr(args, "continue")
-
         self.args = args
+
+        if args.fp16:
+            from apex import amp
+
+            self.amp = amp
 
         lines = [f"{k}: {v}" for k, v in sorted(vars(args).items())]
         print(message_box("Arguments", "\n".join(lines)))
@@ -93,25 +98,16 @@ class BaseRunner(object):
     def create_model(self):
         raise NotImplementedError
 
-    def create_and_prepare_model(self):
+    def create_checkpoint(self):
         args = self.args
-        model = self.create_model()
-
-        if self.training:
-            model = model.train()
-        else:
-            model = model.eval()
-
-        model = checkpoint.prepare(
-            model=model,
-            ckpt_dir=Path(args.ckpt_dir, self.name),
+        return Checkpoint(
+            root=args.ckpt_dir / self.name,
+            model=self.model,
+            optimizer=self.optimizer if self.training else None,
+            amp=self.amp if args.fp16 else None,
             continue_=args.continue_,
             last_epoch=args.last_epoch,
         )
-
-        model = model.to(args.device)
-
-        return model
 
     def create_dataset(self):
         raise NotImplementedError
@@ -120,12 +116,7 @@ class BaseRunner(object):
         args = self.args
         loader = self.autofeed(
             DataLoader,
-            override=dict(
-                dataset=self.create_dataset(),
-                shuffle=self.training,
-                collate_fn=getattr(self, "collate_fn", None),
-                worker_init_fn=getattr(self, "worker_init_fn", None),
-            ),
+            override=dict(dataset=self.create_dataset(), shuffle=self.training),
             mapping=dict(num_workers="nj"),
         )
         print("Dataset size:", len(loader.dataset))
@@ -133,7 +124,16 @@ class BaseRunner(object):
 
     def create_optimizer_impl(self, model):
         params = [{"params": model.parameters(), "initial_lr": 1}]
-        return self.autofeed(torch.optim.Adam, dict(params=params, lr=1))
+        optimizer = self.autofeed(torch.optim.Adam, dict(params=params, lr=1))
+
+        def to(device):
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.to(device)
+
+        optimizer.to = to
+        return optimizer
 
     def create_scheduler_impl(self, optimizer, lr, last_epoch):
         if isinstance(lr, float):
@@ -145,7 +145,7 @@ class BaseRunner(object):
 
     def create_scheduler(self):
         return self.create_scheduler_impl(
-            self.optimizer, self.args.lr, self.model.last_epoch
+            self.optimizer, self.args.lr, self.checkpoint.last_epoch
         )
 
     def run(self):
@@ -160,9 +160,17 @@ class BaseRunner(object):
 
     def prepare_train(self):
         self.loader = self.create_data_loader()
-        self.model = self.create_and_prepare_model()
+        self.model = self.create_model().train()
         self.optimizer = self.create_optimizer()
+        self.model.to(self.args.device)
+        self.optimizer.to(self.args.device)
+        if self.args.fp16:
+            self.model, self.optimizer = self.amp.initialize(
+                self.model, self.optimizer, opt_level="O2"
+            )
+        self.checkpoint = self.create_checkpoint()
         self.scheduler = self.create_scheduler()
+        self.checkpoint.load()
 
     def create_pbar(self):
         pbar = tqdm.tqdm(self.loader, dynamic_ncols=True)
@@ -184,8 +192,8 @@ class BaseRunner(object):
     def train(self):
         args = self.args
         self.prepare_train()
-        epoch_start = self.model.last_epoch + 1
-        epoch_stop = self.model.last_epoch + 1 + args.epochs
+        epoch_start = self.checkpoint.last_epoch + 1
+        epoch_stop = self.checkpoint.last_epoch + 1 + args.epochs
         for self.epoch in range(epoch_start, epoch_stop):
             pbar = self.create_pbar()
             pbar.set_description(f"Epoch: {self.epoch}/{epoch_stop}")
@@ -197,12 +205,17 @@ class BaseRunner(object):
                     pbar.lines[i].set_postfix_str(item)
             self.scheduler.step()
             if (self.epoch + 1) % self.args.save_every == 0:
-                self.model.save(self.epoch)
+                self.checkpoint.save(self.epoch)
         pbar.close()
 
     def prepare_test(self):
         self.loader = self.create_data_loader()
-        self.model = self.create_and_prepare_model()
+        self.model = self.create_model().eval()
+        self.model.to(self.args.device)
+        if self.args.fp16:
+            self.model = self.amp.initialize(self.model, opt_level="O2")
+        self.checkpoint = self.create_checkpoint()
+        self.checkpoint.load()
 
     def test(self):
         self.prepare_test()

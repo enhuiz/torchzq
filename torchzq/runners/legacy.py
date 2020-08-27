@@ -26,7 +26,14 @@ class LegacyRunner(BaseRunner):
         if self.training:
             x = self.feed(self.model, x)
             loss = self.criterion(x, y)
-            (loss / args.update_every).backward()
+
+            if args.fp16:
+                with self.amp.scale_loss(
+                    loss / args.update_every, self.optimizer
+                ) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                (loss / args.update_every).backward()
 
             if (self.step + 1) % args.update_every == 0:
                 self.optimizer.step()
