@@ -45,14 +45,14 @@ class BaseRunner(object):
         parser.add_argument("--ckpt-dir", type=Path, default="ckpt")
         parser.add_argument("--log-dir", type=Path, default="logs")
         parser.add_argument("--recording", type=str2bool, default=True)
-        parser.add_argument("--fp16", type=str2bool, default=False)
+        parser.add_argument("--amp-level", choices=["O0", "O1", "O2", "O3"])
         args = parser.parse_args()
 
         args.continue_ = getattr(args, "continue")
         delattr(args, "continue")
         self.args = args
 
-        if args.fp16:
+        if self.use_amp:
             from apex import amp
 
             self.amp = amp
@@ -76,6 +76,10 @@ class BaseRunner(object):
     @property
     def training(self):
         return self.command == "train"
+
+    @property
+    def use_amp(self):
+        return self.args.amp_level is not None
 
     def autofeed(self, callable, override={}, mapping={}):
         """Priority: 1. override, 2. parsed args 3. parameters' default
@@ -104,7 +108,7 @@ class BaseRunner(object):
             root=args.ckpt_dir / self.name,
             model=self.model,
             optimizer=self.optimizer if self.training else None,
-            amp=self.amp if args.fp16 else None,
+            amp=self.amp if self.use_amp else None,
             continue_=args.continue_,
             last_epoch=args.last_epoch,
         )
@@ -164,7 +168,7 @@ class BaseRunner(object):
         self.optimizer = self.create_optimizer()
         self.model.to(self.args.device)
         self.optimizer.to(self.args.device)
-        if self.args.fp16:
+        if self.use_amp:
             self.model, self.optimizer = self.amp.initialize(
                 self.model, self.optimizer, opt_level="O2"
             )
@@ -212,7 +216,7 @@ class BaseRunner(object):
         self.loader = self.create_data_loader()
         self.model = self.create_model().eval()
         self.model.to(self.args.device)
-        if self.args.fp16:
+        if self.use_amp:
             self.model = self.amp.initialize(self.model, opt_level="O2")
         self.checkpoint = self.create_checkpoint()
         self.checkpoint.load()

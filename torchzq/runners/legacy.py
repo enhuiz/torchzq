@@ -27,7 +27,7 @@ class LegacyRunner(BaseRunner):
             x = self.feed(self.model, x)
             loss = self.criterion(x, y)
 
-            if args.fp16:
+            if self.use_amp:
                 with self.amp.scale_loss(
                     loss / args.update_every, self.optimizer
                 ) as scaled_loss:
