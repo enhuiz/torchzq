@@ -8,9 +8,8 @@ import torch.nn.functional as F
 from pathlib import Path
 from collections import defaultdict
 from torchvision.utils import save_image
-from contextlib import nullcontext
 
-from torchzq.runners.gan import GANRunner
+from torchzq.runners.gan import GANRunner, nullcontext
 
 
 class CGANRunner(GANRunner):

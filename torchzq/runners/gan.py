@@ -7,11 +7,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
 from collections import defaultdict
-from contextlib import nullcontext
 from torchvision.utils import save_image
 
 from torchzq.runners.base import BaseRunner
 from torchzq.parsing import union, optional, lambda_, prevent_future_arguments
+
+try:
+    from contextlib import nullcontext
+except:
+    from contextlib import contextmanager
+
+    @contextmanager
+    def nullcontext(*args, **kwargs):
+        yield None
 
 
 class CombinedScheduler(list):
