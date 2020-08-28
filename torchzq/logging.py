@@ -76,7 +76,7 @@ class Logger:
     @staticmethod
     def prettify(value):
         if type(value) is float:
-            value = f"{value:.3g}"
+            value = f"{value:.4g}"
         return value
 
     def priortize(self, l, priority):
