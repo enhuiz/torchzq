@@ -2,7 +2,7 @@ import types
 import operator
 
 
-def ignore_future_arguments(parser, *ignored):
+def ignore_future_arguments(parser, ignored):
     call = parser.add_argument
 
     def add_argument(*args, **kwargs):
