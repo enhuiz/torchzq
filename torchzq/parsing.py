@@ -2,12 +2,14 @@ import types
 import operator
 
 
-def ignore_future_arguments(parser, ignored):
+def prevent_future_arguments(parser, prevented):
     call = parser.add_argument
+    clean = lambda s: s[2:] if s[:2] == "--" else s
+    prevented = list(map(clean, prevented))
 
     def add_argument(*args, **kwargs):
         name = args[0]
-        if name not in ignored:
+        if clean(name) not in prevented:
             call(name, *args[1:], **kwargs)
 
     parser.add_argument = add_argument

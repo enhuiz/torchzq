@@ -11,7 +11,7 @@ from contextlib import nullcontext
 from torchvision.utils import save_image
 
 from torchzq.runners.base import BaseRunner
-from torchzq.parsing import union, optional, lambda_, ignore_future_arguments
+from torchzq.parsing import union, optional, lambda_, prevent_future_arguments
 
 
 class CombinedScheduler(list):
@@ -31,7 +31,7 @@ class GANRunner(BaseRunner):
         parser.add_argument("--vis-dir", type=Path, default="vis")
         parser.add_argument("--vis-every", type=int, default=100)
         parser.add_argument("--gp-weight", type=float, default=10)
-        parser = ignore_future_arguments(parser, ["lr"])
+        parser = prevent_future_arguments(parser, ["lr"])
         super().__init__(parser, **kwargs)
 
     def gp_loss(self, images, outputs):
