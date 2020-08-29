@@ -88,12 +88,16 @@ class BaseRunner(object):
             return mapping[key] if key in mapping else key
 
         def default(key):
+            if parameters[key].default is inspect._empty:
+                raise RuntimeError(f'No default value is set for "{key}"!')
             return parameters[key].default
 
         def getval(key):
             if key in override:
                 return override[key]
-            return getattr(self.args, mapped(key), default(key))
+            if hasattr(self.args, mapped(key)):
+                return getattr(self.args, mapped(key))
+            return default(key)
 
         return callable(**{key: getval(key) for key in parameters})
 
