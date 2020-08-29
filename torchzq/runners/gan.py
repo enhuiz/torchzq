@@ -30,6 +30,16 @@ class CombinedOptimizer(list):
         for optimizer in self:
             optimizer.to(device)
 
+    def state_dict(self):
+        state_dicts = []
+        for optimizer in self:
+            state_dicts.append(optimizer.state_dict())
+        return state_dicts
+
+    def load_state_dict(self, state_dicts):
+        for i, optimizer in enumerate(self):
+            optimizer.load_state_dict(state_dicts[i])
+
 
 class CombinedScheduler(list):
     def __init__(self, schedulers):
