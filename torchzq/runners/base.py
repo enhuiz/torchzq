@@ -27,8 +27,7 @@ class BaseRunner(object):
         save_every=5,
         update_every=1,
     ):
-        """args passed will be used as defaults.
-        """
+        """args passed will be used as defaults."""
         parser = parser or argparse.ArgumentParser()
         parser.add_argument("command")
         parser.add_argument("--name", type=str, default=name)
@@ -82,8 +81,7 @@ class BaseRunner(object):
         return self.args.amp_level is not None
 
     def autofeed(self, callable, override={}, mapping={}):
-        """Priority: 1. override, 2. parsed args 3. parameters' default
-        """
+        """Priority: 1. override, 2. parsed args 3. parameters' default"""
         parameters = inspect.signature(callable).parameters
 
         def mapped(key):
@@ -210,7 +208,7 @@ class BaseRunner(object):
             self.scheduler.step()
             if (self.epoch + 1) % self.args.save_every == 0:
                 self.checkpoint.save(self.epoch)
-        pbar.close()
+            pbar.close()
 
     def prepare_test(self):
         self.loader = self.create_data_loader()
