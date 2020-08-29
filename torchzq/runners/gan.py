@@ -22,6 +22,15 @@ except:
         yield None
 
 
+class CombinedOptimizer(list):
+    def __init__(self, optimizer):
+        super().__init__(optimizer)
+
+    def to(self, device):
+        for optimizer in self:
+            optimizer.to(device)
+
+
 class CombinedScheduler(list):
     def __init__(self, schedulers):
         super().__init__(schedulers)
@@ -100,19 +109,21 @@ class GANRunner(BaseRunner):
         }
 
     def create_optimizer(self):
-        return (
-            super().create_optimizer_impl(self.G),
-            super().create_optimizer_impl(self.D),
+        return CombinedOptimizer(
+            [
+                self.create_optimizer_impl(self.G),
+                self.create_optimizer_impl(self.D),
+            ]
         )
 
     def create_scheduler(self):
         args = self.args
         g_optimizer, d_optimizer = self.optimizer
-        g_scheduler = super().create_scheduler_impl(
-            g_optimizer, args.g_lr, self.model.last_epoch
+        g_scheduler = self.create_scheduler_impl(
+            g_optimizer, args.g_lr, self.checkpoint.last_epoch
         )
-        d_scheduler = super().create_scheduler_impl(
-            d_optimizer, args.d_lr, self.model.last_epoch
+        d_scheduler = self.create_scheduler_impl(
+            d_optimizer, args.d_lr, self.checkpoint.last_epoch
         )
         scheduler = CombinedScheduler([g_scheduler, d_scheduler])
         return scheduler
