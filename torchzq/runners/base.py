@@ -125,7 +125,7 @@ class BaseRunner(object):
 
         return Checkpoint(
             root=args.ckpt_dir / self.name,
-            model=self.model,
+            model=model,
             optimizer=self.optimizer if self.training else None,
             amp=self.amp if self.use_amp else None,
             continue_=args.continue_,
