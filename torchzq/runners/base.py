@@ -101,20 +101,6 @@ class BaseRunner(object):
 
         return callable(**{key: getval(key) for key in parameters})
 
-    def create_model(self):
-        raise NotImplementedError
-
-    def create_checkpoint(self):
-        args = self.args
-        return Checkpoint(
-            root=args.ckpt_dir / self.name,
-            model=self.model,
-            optimizer=self.optimizer if self.training else None,
-            amp=self.amp if self.use_amp else None,
-            continue_=args.continue_,
-            last_epoch=args.last_epoch,
-        )
-
     def create_dataset(self):
         raise NotImplementedError
 
@@ -128,7 +114,28 @@ class BaseRunner(object):
         print("Dataset size:", len(loader.dataset))
         return loader
 
-    def create_optimizer_impl(self, model):
+    def create_model(self):
+        raise NotImplementedError
+
+    def create_checkpoint(self, model=None):
+        args = self.args
+
+        if model is None:
+            model = self.model
+
+        return Checkpoint(
+            root=args.ckpt_dir / self.name,
+            model=self.model,
+            optimizer=self.optimizer if self.training else None,
+            amp=self.amp if self.use_amp else None,
+            continue_=args.continue_,
+            last_epoch=args.last_epoch,
+        )
+
+    def create_optimizer(self, model=None):
+        if model is None:
+            model = self.model
+
         params = [{"params": model.parameters(), "initial_lr": 1}]
         optimizer = self.autofeed(torch.optim.Adam, dict(params=params, lr=1))
 
@@ -139,20 +146,23 @@ class BaseRunner(object):
                         state[k] = v.to(device)
 
         optimizer.to = to
+
         return optimizer
 
-    def create_scheduler_impl(self, optimizer, lr, last_epoch):
+    def create_scheduler(self, optimizer=None, lr=None, last_epoch=None):
+        if optimizer is None:
+            optimizer = self.optimizer
+
+        if lr is None:
+            lr = self.args.lr
+
+        if last_epoch is None:
+            last_epoch = self.checkpoint.last_epoch
+
         if isinstance(lr, float):
             return LambdaLR(optimizer, lambda _: lr, last_epoch)
+
         return LambdaLR(optimizer, lr, last_epoch)
-
-    def create_optimizer(self):
-        return self.create_optimizer_impl(self.model)
-
-    def create_scheduler(self):
-        return self.create_scheduler_impl(
-            self.optimizer, self.args.lr, self.checkpoint.last_epoch
-        )
 
     def run(self):
         func = getattr(self, self.command, None)

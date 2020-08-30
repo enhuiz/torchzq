@@ -121,20 +121,16 @@ class GANRunner(BaseRunner):
     def create_optimizer(self):
         return CombinedOptimizer(
             [
-                self.create_optimizer_impl(self.G),
-                self.create_optimizer_impl(self.D),
+                super().create_optimizer(self.G),
+                super().create_optimizer(self.D),
             ]
         )
 
     def create_scheduler(self):
         args = self.args
         g_optimizer, d_optimizer = self.optimizer
-        g_scheduler = self.create_scheduler_impl(
-            g_optimizer, args.g_lr, self.checkpoint.last_epoch
-        )
-        d_scheduler = self.create_scheduler_impl(
-            d_optimizer, args.d_lr, self.checkpoint.last_epoch
-        )
+        g_scheduler = super().create_scheduler(g_optimizer, args.g_lr)
+        d_scheduler = super().create_scheduler(d_optimizer, args.d_lr)
         scheduler = CombinedScheduler([g_scheduler, d_scheduler])
         return scheduler
 
