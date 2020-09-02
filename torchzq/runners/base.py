@@ -45,6 +45,7 @@ class BaseRunner(object):
         parser.add_argument("--log-dir", type=Path, default="logs")
         parser.add_argument("--recording", type=str2bool, default=True)
         parser.add_argument("--amp-level", choices=["O0", "O1", "O2", "O3"])
+        parser.add_argument("--strict-loading", type=str2bool, default=True)
         args = parser.parse_args()
 
         args.continue_ = getattr(args, "continue")
@@ -194,7 +195,7 @@ class BaseRunner(object):
             )
         self.checkpoint = self.create_checkpoint()
         self.scheduler = self.create_scheduler()
-        self.checkpoint.load()
+        self.checkpoint.load(self.args.strict_loading)
 
     def create_pbar(self):
         pbar = tqdm.tqdm(self.loader, dynamic_ncols=True)
@@ -239,7 +240,7 @@ class BaseRunner(object):
         if self.use_amp:
             self.model = self.amp.initialize(self.model, opt_level="O2")
         self.checkpoint = self.create_checkpoint()
-        self.checkpoint.load()
+        self.checkpoint.load(self.args.strict_loading)
 
     def test(self):
         self.prepare_test()

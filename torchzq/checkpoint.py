@@ -2,9 +2,28 @@ import torch
 from pathlib import Path
 
 
+def weakly_load_state_dict(module, state_dict):
+    provided = set(state_dict)
+    required = set(module.state_dict())
+    agreed = provided & required
+    state_dict = {k: state_dict[k] for k in agreed}
+    module.load_state_dict(state_dict, strict=False)
+    print("Provided but not required keys: ")
+    print(provided - required)
+    print("Required but not provided keys: ")
+    print(required - provided)
+    return module
+
+
 class Checkpoint:
     def __init__(
-        self, root, model, optimizer=None, amp=None, continue_=False, last_epoch=None,
+        self,
+        root,
+        model,
+        optimizer=None,
+        amp=None,
+        continue_=False,
+        last_epoch=None,
     ):
         self.root = root
         self.model = model
@@ -35,7 +54,7 @@ class Checkpoint:
 
         return last_epoch
 
-    def load(self):
+    def load(self, strict=True):
         if self.last_epoch >= 0:
             path = self.root / f"{self.last_epoch}.pth"
             state_dict = torch.load(path)
@@ -43,7 +62,11 @@ class Checkpoint:
                 # for backward compatiblility
                 self.model.load_state_dict(state_dict)
             else:
-                self.model.load_state_dict(state_dict["model"])
+                if strict:
+                    self.model.load_state_dict(state_dict["model"])
+                else:
+                    self.model = weakly_load_state_dict(self.model, state_dict["model"])
+
                 # during testing, optimizer is None
                 if self.optimizer is not None:
                     self.optimizer.load_state_dict(state_dict["optimizer"])
