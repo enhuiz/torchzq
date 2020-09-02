@@ -80,6 +80,14 @@ class BaseRunner(object):
     def use_amp(self):
         return self.args.amp_level is not None
 
+    @property
+    def Dataset(self):
+        raise NotImplementedError
+
+    @property
+    def Optimizer(self):
+        return torch.optim.Adam
+
     def autofeed(self, callable, override={}, mapping={}):
         """Priority: 1. override, 2. parsed args 3. parameters' default"""
         parameters = inspect.signature(callable).parameters
@@ -137,7 +145,7 @@ class BaseRunner(object):
             model = self.model
 
         params = [{"params": model.parameters(), "initial_lr": 1}]
-        optimizer = self.autofeed(torch.optim.Adam, dict(params=params, lr=1))
+        optimizer = self.autofeed(self.Optimizer, dict(params=params, lr=1))
 
         def to(device):
             for state in optimizer.state.values():
