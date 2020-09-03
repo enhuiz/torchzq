@@ -21,6 +21,10 @@ def listof(type_):
     return lambda s: list(map(type_, s.split(",")))
 
 
+def tupleof(type_):
+    return lambda s: tuple(map(type_, s.split(",")))
+
+
 def str2bool(v):
     assert v.lower() in ["true", "false"]
     return v.lower() == "true"
