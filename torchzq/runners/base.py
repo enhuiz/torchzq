@@ -13,7 +13,7 @@ from torch.optim.lr_scheduler import LambdaLR
 
 from torchzq.checkpoint import Checkpoint
 from torchzq.parsing import union, lambda_, str2bool
-from torchzq.logging import Logger, message_box
+from torchzq.logging import Logger, message_box, Timer
 
 
 class BaseRunner(object):
@@ -46,6 +46,7 @@ class BaseRunner(object):
         parser.add_argument("--recording", type=str2bool, default=True)
         parser.add_argument("--amp-level", choices=["O0", "O1", "O2", "O3"])
         parser.add_argument("--strict-loading", type=str2bool, default=True)
+        parser.add_argument("--quiet", action="store_true")
         args = parser.parse_args()
 
         args.continue_ = getattr(args, "continue")
@@ -198,15 +199,42 @@ class BaseRunner(object):
         self.checkpoint.load(self.args.strict_loading)
 
     def create_pbar(self):
-        pbar = tqdm.tqdm(self.loader, dynamic_ncols=True)
-        pbar.lines = defaultdict(lambda: tqdm.tqdm(bar_format="╰{postfix}"))
+        args = self.args
+
+        pbar = tqdm.tqdm(self.loader, dynamic_ncols=True, disable=args.quiet)
+
         close = pbar.close
 
-        def close_all():
-            close()
-            for line in pbar.lines.values():
+        create_line = lambda: tqdm.tqdm(bar_format="╰{postfix}")
+
+        if args.quiet:
+            items = {}
+            line = create_line()
+
+            timer = Timer(10)
+
+            def set_item(i, s):
+                items[i] = s
+                if timer.timeup():
+                    line.set_postfix_str(", ".join(items.values()) + "\n")
+                    timer.restart()
+
+            def close_all():
+                close()
                 line.close()
 
+        else:
+            lines = defaultdict(create_line)
+
+            def set_item(i, s):
+                lines[i].set_postfix_str(s)
+
+            def close_all():
+                close()
+                for line in lines.values():
+                    line.close()
+
+        pbar.set_item = set_item
         pbar.close = close_all
 
         return pbar
@@ -227,7 +255,7 @@ class BaseRunner(object):
                 batch = self.prepare_batch(batch)
                 self.update(batch)
                 for i, item in enumerate(self.logger.render(["step"])):
-                    pbar.lines[i].set_postfix_str(item)
+                    pbar.set_item(i, item)
             self.scheduler.step()
             if (self.epoch + 1) % self.args.save_every == 0:
                 self.checkpoint.save(self.epoch)
@@ -250,7 +278,7 @@ class BaseRunner(object):
             batch = self.prepare_batch(batch)
             self.update(batch)
             for i, item in enumerate(self.logger.render(["step"])):
-                pbar.lines[i].set_postfix_str(item)
+                pbar.set_item(i, item)
         pbar.close()
 
     @staticmethod
