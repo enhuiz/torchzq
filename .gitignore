@@ -2,3 +2,5 @@
 ckpt
 logs
 example/example.yml
+torchzq.egg-info
+dist
