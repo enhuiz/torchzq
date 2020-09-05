@@ -2,16 +2,19 @@ import torch
 from pathlib import Path
 
 
-def weakly_load_state_dict(module, state_dict):
-    provided = set(state_dict)
-    required = set(module.state_dict())
-    agreed = provided & required
-    state_dict = {k: state_dict[k] for k in agreed}
-    module.load_state_dict(state_dict, strict=False)
-    print("Provided but not required keys: ")
-    print(provided - required)
-    print("Required but not provided keys: ")
-    print(required - provided)
+def load_state_dict(module, state_dict, strict):
+    if strict:
+        module.load_state_dict(state_dict, strict=True)
+    else:
+        provided = set(state_dict)
+        required = set(module.state_dict())
+        agreed = provided & required
+        state_dict = {k: state_dict[k] for k in agreed}
+        print("Provided but not required keys: ")
+        print(provided - required)
+        print("Required but not provided keys: ")
+        print(required - provided)
+        module.load_state_dict(state_dict, strict=False)
     return module
 
 
@@ -62,17 +65,16 @@ class Checkpoint:
                 # for backward compatiblility
                 self.model.load_state_dict(state_dict)
             else:
-                if strict:
-                    self.model.load_state_dict(state_dict["model"])
-                else:
-                    self.model = weakly_load_state_dict(self.model, state_dict["model"])
+                load_state_dict(self.model, state_dict["model"], strict)
 
                 # during testing, optimizer is None
                 if self.optimizer is not None:
                     self.optimizer.load_state_dict(state_dict["optimizer"])
+
                 # without fp16, amp is None
                 if self.amp is not None:
                     self.amp.load_state_dict(state_dict["amp"])
+
             print(f"{path} loaded.")
 
     def save(self, epoch):
