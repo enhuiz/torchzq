@@ -69,7 +69,12 @@ class Checkpoint:
 
                 # during testing, optimizer is None
                 if self.optimizer is not None:
-                    self.optimizer.load_state_dict(state_dict["optimizer"])
+                    try:
+                        self.optimizer.load_state_dict(state_dict["optimizer"])
+                    except Exception as e:
+                        print(e)
+                        # allow not loading the optimizer
+                        print("Warning: loading optimizer failed.")
 
                 # without fp16, amp is None
                 if self.amp is not None:
