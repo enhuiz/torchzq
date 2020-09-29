@@ -1,85 +1,42 @@
 import re
-import time
-import torch
 import pandas as pd
 import operator
+import inspect
 from pathlib import Path
 from collections import defaultdict
-from functools import wraps
-from itertools import islice
+from functools import partial
+from torch.utils.tensorboard import SummaryWriter
+
+from .utils import EMAMeter
 
 
-def message_box(title, content, width=None, aligner="<"):
-    width = width or max(map(len, [title, *content.splitlines()])) + 8
+class Logger(SummaryWriter):
+    def __init__(self, log_dir, smoothing=[], **kwargs):
+        super().__init__(log_dir, **kwargs)
+        self._smoothing = smoothing
+        self._meters = defaultdict(EMAMeter)
+        self._buffer = {}
+        self._delayed_addings = []
+        self._make_delayed_adders()
 
-    nb = width - 2  # number of blanks
-    border = f"│{{: ^{nb}}}│"
+    def _make_delayed_adders(self):
+        """
+        Make the adder functions lazy and only to complete in the render function.
+        If the adder is add_scalar or add_text, aslo save it to buffer for rendering.
+        """
+        for name, method in inspect.getmembers(self, inspect.ismethod):
+            parameters = inspect.signature(method).parameters
+            if name.startswith("add_") and "global_step" in parameters:
 
-    out = []
-    out.append("┌" + "─" * nb + "┐")
-    out.append(border.format(title.capitalize()))
-    out.append("├" + "─" * nb + "┤")
+                def delayed(tag, value, _name=name, _method=method, **kwargs):
+                    curried = partial(_method, tag, value, **kwargs)
+                    self._delayed_addings.append(curried)
+                    if _name in ["add_scalar", "add_text"]:
+                        self._buffer[tag] = value
 
-    for line in content.splitlines():
-        out.append(border.replace("^", aligner).format(line.strip()))
+                setattr(self, name, delayed)
 
-    out.append("└" + "─" * nb + "┘")
-
-    return "\n".join(out)
-
-
-class Timer:
-    def __init__(self, interval):
-        self.interval = interval
-        self.restart()
-
-    def restart(self):
-        self.start_time = time.time()
-
-    def timeup(self):
-        return time.time() - self.start_time > self.interval
-
-
-def throttle(func, seconds):
-    timer = Timer(seconds)
-
-    @wraps(func)
-    def wrapped(*args, **kwargs):
-        if timer.timeup():
-            result = func(*args, **kwargs)
-            timer.restart()
-            return result
-
-    return wrapped
-
-
-class Logger:
-    def __init__(self, dir, dump_interval=10, sma_windows={}):
-        self.path = None if dir is None else self.create_path(dir)
-        self.throttled_dump = throttle(self.dump, dump_interval)
-        self.sma_windows = sma_windows
-        self.records = [{}]
-
-    @staticmethod
-    def create_path(dir):
-        return Path(dir, str(int(time.time()))).with_suffix(".csv")
-
-    @staticmethod
-    def convert_to_basic_type(value):
-        if type(value) is torch.Tensor:
-            try:
-                value = value.item()
-            except:
-                value = value.tolist()
-        return value
-
-    @staticmethod
-    def prettify(value):
-        if type(value) is float:
-            value = f"{value:.4g}"
-        return value
-
-    def priortize(self, l, priority):
+    def _priortize(self, l, priority):
         def helper(pair):
             i, s = pair
             p = len(l) - i
@@ -90,49 +47,35 @@ class Logger:
 
         return map(operator.itemgetter(1), sorted(enumerate(l), key=helper))
 
-    @property
-    def record(self):
-        return self.records[-1]
+    @staticmethod
+    def _prettify(value):
+        if type(value) is float:
+            value = f"{value:.4g}"
+        return value
 
-    def log(self, key, value):
-        self.record[key] = self.convert_to_basic_type(value)
-
-    def column(self, key, reverse=False):
-        records = reversed(self.records) if reverse else self.records
-        for record in records:
-            if key in record:
-                yield record[key]
-
-    def sma_window(self, key):
-        for pattern in self.sma_windows:
+    def _render_value(self, key):
+        value = self._buffer[key]
+        for pattern in self._smoothing:
             if re.match(pattern, key) is not None:
-                return self.sma_windows[pattern]
-        return 1
+                value = self.meters[key](value)
+        return self._prettify(value)
 
-    def render(self, priority=[]):
-        mean = lambda l: sum(l) / len(l) if len(l) > 1 else l[0]
-        getval = lambda key: mean(
-            list(islice(self.column(key, reverse=True), self.sma_window(key)))
-        )
+    def _perform_addings(self, global_step):
+        for adding in self._delayed_addings:
+            adding(global_step=global_step)
+        self.flush()
+        self._delayed_addings.clear()
 
-        ordered_keys = self.priortize(self.record.keys(), priority)
-        items = [f"{key}: {self.prettify(getval(key))}" for key in ordered_keys]
+    def render(self, global_step, priority=[]):
+        self._perform_addings(global_step)
+        keys = self._priortize(self._buffer.keys(), priority)
+        lines = [f"{key}: {self._render_value(key)}" for key in keys]
+        self._buffer.clear()
+        return lines
 
-        self.log("timestamp", time.time())
-        self.throttled_dump()
-        self.records.append({})
 
-        return items
-
-    def dump(self, path=None):
-        path = path or self.path
-        records = [record for record in self.records if "timestamp" in record]
-        if path is not None and records:
-            path = Path(path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            records = sorted(records, key=operator.itemgetter("timestamp"))
-            df = pd.DataFrame(records)
-            df.to_csv(path, index=None)
-
-    def __del__(self):
-        self.dump()
+if __name__ == "__main__":
+    logger = Logger("./tensorboard_test", [])
+    logger.add_scalar("hi", 1)
+    logger.add_text("hello", "world")
+    print(logger.render(0))
