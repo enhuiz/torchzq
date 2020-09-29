@@ -57,7 +57,7 @@ class Logger(SummaryWriter):
         value = self._buffer[key]
         for pattern in self._smoothing:
             if re.match(pattern, key) is not None:
-                value = self.meters[key](value)
+                value = self._meters[key](value)
         return self._prettify(value)
 
     def _perform_addings(self, global_step):
@@ -75,7 +75,9 @@ class Logger(SummaryWriter):
 
 
 if __name__ == "__main__":
-    logger = Logger("./tensorboard_test", [])
+    logger = Logger("./tensorboard_test", ["hi"])
     logger.add_scalar("hi", 1)
     logger.add_text("hello", "world")
     print(logger.render(0))
+    logger.add_scalar("hi", 2)
+    print(logger.render(1))
