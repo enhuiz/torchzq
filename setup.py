@@ -14,6 +14,6 @@ setup(
     long_description_content_type="text/markdown",
     packages=["torchzq", "torchzq/runners"],
     scripts=["zouqi", "zqboard"],
-    install_requires=["torch", "zouqi==1.0.2", "pyyaml"],
+    install_requires=["torch", "zouqi==1.0.3", "pyyaml"],
     url="https://github.com/enhuiz/torchzq",
 )
