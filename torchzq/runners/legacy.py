@@ -17,9 +17,6 @@ class LegacyRunner(BaseRunner):
     def criterion(self, x, y):
         raise NotImplementedError
 
-    def predict(self, x):
-        return x
-
     @staticmethod
     def update_lr(optimizer, lr):
         for g in optimizer.param_groups:
@@ -49,7 +46,7 @@ class LegacyRunner(BaseRunner):
             else:
                 (loss / args.update_every).backward()
 
-            if (iteration + 1) % args.update_every == 0:
+            if (model.iteration + 1) % args.update_every == 0:
                 optimizer.step()
                 optimizer.zero_grad()
 

@@ -70,7 +70,7 @@ class Saver:
         model.epoch = epoch
         model.iteration = iteration
 
-    def save(self, model, optimizer=None, iteration=None):
+    def save(self, model, optimizer=None):
         self.root.mkdir(parents=True, exist_ok=True)
         path = self.root / f"{model.epoch}.pth"
         state_dict = dict(

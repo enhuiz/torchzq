@@ -45,6 +45,10 @@ class ConfigParser:
                 parsed[-1].append(s)
         return parsed
 
+    @staticmethod
+    def normalize_key(key):
+        return "--" + key.replace("_", "-").lstrip("-")
+
     def parse_cmd(self, command, manual_options=[]):
         data = parse_yaml(self.path)
         if command in data:
@@ -62,15 +66,15 @@ class ConfigParser:
         options = []
         for k, v in list(data.items()):
             if type(v) is not dict:
-                options.append(f'--{k} "{v}"')
+                options.append(f'{self.normalize_key(k)} "{v}"')
 
         for kv in self.parse_manual_options(manual_options):
             try:
                 k, v = kv
-                options.append(f'--{k} "{v}"')
+                options.append(f'{self.normalize_key(k)} "{v}"')
             except:
                 (k,) = kv
-                options.append(f"--{k}")
+                options.append(f"{self.normalize_key(k)}")
 
         return f"{runner} {command} " + " ".join(options)
 

@@ -93,7 +93,7 @@ class BaseRunner(zouqi.Runner):
         return tuple(args)
 
     def create_optimizer(self, model):
-        optimizer = self.autofeed(self.Optimizer, dict(params=model.parameters()))
+        optimizer = self.autofeed(self.Optimizer, dict(params=model.parameters(), lr=1))
 
         for state in optimizer.state.values():
             for k, v in state.items():
@@ -145,7 +145,7 @@ class BaseRunner(zouqi.Runner):
 
     def create_scheduler(self):
         schedulers = {}
-        if hasattr(self.args, "lr"):
+        if self.command == "train":
             self.args.lr = create_scheduler(self.args.lr)
             schedulers["lr"] = self.args.lr
         return SchedulerDict(**schedulers)
@@ -183,8 +183,7 @@ class BaseRunner(zouqi.Runner):
             print("Some checkpoints exist and continue not set, skip training.")
             exit()
 
-        if continue_:
-            self.saver.load(model, optimizer, epoch=epoch, strict=args.strict_loading)
+        self.saver.load(model, optimizer, epoch=epoch, strict=args.strict_loading)
 
         scheduler = self.create_scheduler()
 
@@ -193,44 +192,67 @@ class BaseRunner(zouqi.Runner):
 
         start_epoch = model.epoch
 
-        for model.epoch in range(start_epoch, max_epochs + 1):
+        while model.epoch < max_epochs:
+            model.epoch += 1
+
             pbar = self.create_pbar(dl)
-            pbar.set_description(f"Epoch: {epoch}/{max_epochs}")
-            for model.iteration, batch in enumerate(pbar, epoch * len(dl)):
+            pbar.set_description(f"Train: {model.epoch}/{max_epochs}")
+
+            for batch in pbar:
+                model.iteration += 1
                 scheduler.step(model.epoch, model.iteration)
                 batch = self.prepare_batch(batch)
                 self.step(batch, model, logger, optimizer)
-                for i, line in enumerate(logger.render(iteration)):
+                for i, line in enumerate(logger.render(model.iteration)):
                     pbar.set_line(i, line)
-            # after training, the model has grown up by 1 epoch.
-            model.epoch += 1
+
             if model.epoch % save_every == 0:
-                self.saver.save(model, optimizer, iteration=iteration)
+                self.saver.save(model, optimizer)
             if model.epoch % validate_every == 0:
-                val_logger = self.validate(model)
+                val_logger = self.validate(model=model)
                 model.train()
 
             pbar.close()
 
-    @zouqi.command
-    @torch.no_grad()
-    def validate(self, epoch: int = None, model: ignored = None):
+    def prepare_test(self, name, split, epoch=None, model=None):
+        """
+        Args:
+            name: name of this test
+            split: data split
+            epoch: epoch to load, only when model is None
+            model: loaded model
+        Returns:
+            model, logger, pbar
+        """
         args = self.args
 
         if model is None:
             model = self.create_model().to(args.device)
             model = self.prepare_amp(model)
             self.saver.load(model, epoch=epoch, strict=args.strict_loading)
+            scheduler = self.create_scheduler()
+            scheduler.step(model.epoch, model.iteration)
 
         model.eval()
 
-        dl = self.create_data_loader("validate")
-        logger = self.create_logger(f"validate/{epoch}", "val/")
-        scheduler = self.create_scheduler()
-        scheduler.step(model.epoch, model.iteration)
+        dl = self.create_data_loader(split)
+        logger = self.create_logger(f"{name}/{model.epoch}", f"{name}/")
 
         pbar = self.create_pbar(dl)
-        pbar.set_description(f"Validating: {model.epoch}")
+
+        return model, logger, pbar
+
+    @zouqi.command
+    @torch.no_grad()
+    def validate(
+        self,
+        epoch: int = None,
+        model: ignored = None,
+        split: str = "validate",
+    ):
+        model, logger, pbar = self.prepare_test("val", split, epoch, model)
+
+        pbar.set_description(f"Validate: @{model.epoch}")
         for index, batch in enumerate(pbar):
             batch = self.prepare_batch(batch)
             self.step(batch, model, logger)
@@ -250,6 +272,7 @@ class BaseRunner(zouqi.Runner):
             shutil.rmtree(path)
             print(str(path), "removed.")
 
+    @zouqi.command
     def clear(self):
         if input("Are you sure to clear? (y)\n").lower() == "y":
             self.try_rmtree(Path(self.args.ckpt_dir, self.name))

@@ -2,6 +2,7 @@
 """
 An MNIST example for TorchZQ.
 """
+
 import torchzq
 
 import argparse
@@ -90,9 +91,16 @@ class Runner(torchzq.LegacyRunner):
     def criterion(self, x, y):
         return F.nll_loss(x, y)
 
-    def evaluate(self, x, y):
-        x = torch.stack(x)
-        y = torch.stack(y)
+    @torchzq.command
+    def test(self, epoch=None, split="test"):
+        model, logger, pbar = self.prepare_test("test", split, epoch)
+        fake, real = [], []
+        for batch in pbar:
+            x, y = self.prepare_batch(batch)
+            fake += model(x).argmax(dim=-1).cpu().tolist()
+            real += y.cpu().tolist()
+        x = torch.tensor(x)
+        y = torch.tensor(y)
         correct = (x == y).sum()
         print(
             "Test set: Accuracy: {}/{} ({:.0f}%)".format(

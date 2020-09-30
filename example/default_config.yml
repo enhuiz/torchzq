@@ -1,4 +1,4 @@
 name: default
 
 train:
-  epochs: 1
+  max_epoch: 10

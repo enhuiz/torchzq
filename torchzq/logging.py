@@ -70,8 +70,8 @@ class Logger(SummaryWriter):
 
     def render(self, global_step, priority=[]):
         self._perform_addings(global_step)
-        self._buffer["step"].append(global_step)
-        priority = ["step"] + priority
+        self._buffer["iteration"].append(global_step)
+        priority = ["iteration"] + priority
         tags = self._priortize(self._buffer, priority)
         lines = [f"{tag}: {self._render_value(tag)}" for tag in tags]
         return lines
@@ -91,12 +91,3 @@ class Logger(SummaryWriter):
 
     def __iter__(self):
         yield from self._buffer
-
-
-if __name__ == "__main__":
-    logger = Logger("./tensorboard_test", ["hi"])
-    logger.add_scalar("hi", 1)
-    logger.add_text("hello", "world")
-    print(logger.render(0))
-    logger.add_scalar("hi", 2)
-    print(logger.render(1))
