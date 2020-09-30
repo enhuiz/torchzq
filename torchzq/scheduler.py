@@ -73,7 +73,7 @@ class SchedulerDict(dict):
 
 
 def create_scheduler(x):
-    x = eval(x)
+    x = eval(str(x))
 
     if not callable(x):
         x = Constant(x)

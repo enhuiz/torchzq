@@ -100,6 +100,16 @@ class BaseRunner(zouqi.Runner):
                 if torch.is_tensor(v):
                     state[k] = v.to(self.args.device)
 
+        def get_lr():
+            return optimizer.param_groups[0]["lr"]
+
+        def set_lr(lr):
+            for g in optimizer.param_groups:
+                g["lr"] = lr
+
+        optimizer.get_lr = get_lr
+        optimizer.set_lr = set_lr
+
         return optimizer
 
     def create_pbar(self, loader):
@@ -153,21 +163,17 @@ class BaseRunner(zouqi.Runner):
     def prepare_batch(self, batch):
         raise NotImplementedError
 
-    @staticmethod
-    def step(batch, model, logger, optimizer=None):
-        """
-        A stateless step function
-        """
+    def step(self, batch, model, logger, optimizer=None):
         raise NotImplementedError
 
     @zouqi.command
     def train(
         self,
-        lr: union(float, str) = 1e-3,
+        lr: str = "Constant(1e-3)",
         weight_decay: float = 0,
         max_epochs: int = 100,
         save_every: int = 1,
-        validate_every: int = 2,
+        validate_every: int = 100,
         shuffle: str2bool = True,
         continue_: flag = False,
         epoch: optional(int) = None,

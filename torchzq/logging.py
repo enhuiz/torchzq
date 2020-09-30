@@ -51,8 +51,10 @@ class Logger(SummaryWriter):
 
     @staticmethod
     def _prettify(value):
-        if type(value) is float:
+        try:
             value = f"{value:.4g}"
+        except:
+            pass
         return value
 
     def _render_value(self, tag):

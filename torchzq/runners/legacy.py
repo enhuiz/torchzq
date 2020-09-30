@@ -17,11 +17,6 @@ class LegacyRunner(BaseRunner):
     def criterion(self, x, y):
         raise NotImplementedError
 
-    @staticmethod
-    def update_lr(optimizer, lr):
-        for g in optimizer.param_groups:
-            g["lr"] = lr
-
     def step(
         self,
         batch,
@@ -35,7 +30,7 @@ class LegacyRunner(BaseRunner):
         x, y = batch
 
         if optimizer is not None:
-            self.update_lr(optimizer, self.args.lr())
+            optimizer.set_lr(self.args.lr())
 
             x = self.feed(model, x)
             loss = self.criterion(x, y)
@@ -50,7 +45,7 @@ class LegacyRunner(BaseRunner):
                 optimizer.step()
                 optimizer.zero_grad()
 
-            logger.add_scalar("lr", optimizer.param_groups[0]["lr"])
+            logger.add_scalar("lr", optimizer.get_lr())
         else:
             with torch.no_grad():
                 x = self.feed(model, x)

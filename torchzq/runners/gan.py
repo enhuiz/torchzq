@@ -9,8 +9,10 @@ from pathlib import Path
 from collections import defaultdict
 from torchvision.utils import save_image
 
+import zouqi
 from torchzq.runners.base import BaseRunner
-from torchzq.parsing import union, optional, lambda_, prevent_future_arguments
+from torchzq.parsing import union, optional, lambda_
+from torchzq.scheduler import SchedulerDict, create_scheduler
 
 try:
     from contextlib import nullcontext
@@ -26,10 +28,6 @@ class CombinedOptimizer(list):
     def __init__(self, optimizer):
         super().__init__(optimizer)
 
-    def to(self, device):
-        for optimizer in self:
-            optimizer.to(device)
-
     def state_dict(self):
         state_dicts = []
         for optimizer in self:
@@ -41,25 +39,10 @@ class CombinedOptimizer(list):
             optimizer.load_state_dict(state_dicts[i])
 
 
-class CombinedScheduler(list):
-    def __init__(self, schedulers):
-        super().__init__(schedulers)
-
-    def step(self):
-        for scheduler in self:
-            scheduler.step()
-
-
 class GANRunner(BaseRunner):
-    def __init__(self, parser=None, **kwargs):
-        parser = parser or argparse.ArgumentParser()
-        parser.add_argument("--g-lr", type=union(float, lambda_), default=1e-4)
-        parser.add_argument("--d-lr", type=union(float, lambda_), default=1e-4)
-        parser.add_argument("--vis-dir", type=Path, default="vis")
-        parser.add_argument("--vis-every", type=int, default=100)
-        parser.add_argument("--gp-weight", type=float, default=10)
-        parser = prevent_future_arguments(parser, ["lr"])
-        super().__init__(parser, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("--gp-weight", type=float, default=10)
 
     def gp_loss(self, images, outputs):
         n = images.shape[0]
@@ -77,96 +60,85 @@ class GANRunner(BaseRunner):
 
         return self.args.gp_weight * ((grad.norm(2, dim=1) - 1) ** 2).mean()
 
-    @property
-    def G(self):
-        return self.model[0]
-
-    @property
-    def D(self):
-        return self.model[1]
-
-    def g_feed(self, batch):
-        raise NotImplementedError
-
-    def d_feed(self, x, batch):
-        raise NotImplementedError
-
-    def get_real(self, batch):
-        raise NotImplementedError
-
-    def d_criterion(self, batch):
-        with nullcontext() if self.training else torch.no_grad():
-            fake = self.g_feed(batch)
-            fake_output = self.d_feed(fake, batch)
-
-        real = self.get_real(batch)
-        real.requires_grad_()
-        real_output = self.d_feed(real, batch)
-
-        return {
-            "d_fake_loss": F.relu(1 - fake_output).mean(),
-            "d_real_loss": F.relu(1 + real_output).mean(),
-            "d_gp_loss": self.gp_loss(real, real_output),
-        }
-
-    def g_criterion(self, batch):
-        with nullcontext() if self.training else torch.no_grad():
-            fake = self.g_feed(batch)
-            fake_output = self.d_feed(fake, batch)
-
-        return {
-            "g_fake_loss": fake_output.mean(),
-        }
-
-    def create_optimizer(self):
+    def create_optimizer(self, model):
         return CombinedOptimizer(
             [
-                super().create_optimizer(self.G),
-                super().create_optimizer(self.D),
+                super().create_optimizer(model[0]),
+                super().create_optimizer(model[1]),
             ]
         )
 
     def create_scheduler(self):
         args = self.args
-        g_optimizer, d_optimizer = self.optimizer
-        g_scheduler = super().create_scheduler(g_optimizer, args.g_lr)
-        d_scheduler = super().create_scheduler(d_optimizer, args.d_lr)
-        scheduler = CombinedScheduler([g_scheduler, d_scheduler])
-        return scheduler
+        args.g_lr = create_scheduler(args.g_lr)
+        args.d_lr = create_scheduler(args.d_lr)
+        return SchedulerDict(g_lr=args.g_lr, d_lr=args.d_lr)
 
-    def update(self, batch):
+    @staticmethod
+    def feed(model, z, label):
+        try:
+            return model(z, label)
+        except TypeError:
+            return model(z)
+
+    def step(self, batch, model, logger, optimizer=None):
         args = self.args
 
-        if self.training:
-            g_optimizer, d_optimizer = self.optimizer
-            g_scheduler, d_scheduler = self.scheduler
+        real, label = batch
+
+        G, D = model
+
+        training = optimizer is not None
+
+        if training:
+            g_optimizer, d_optimizer = optimizer
+            g_optimizer.set_lr(args.g_lr())
+            d_optimizer.set_lr(args.d_lr())
 
         # train d
-        if self.training:
+        if training:
             d_optimizer.zero_grad()
 
-        d_loss = 0
-        for key, value in self.d_criterion(batch).items():
-            self.logger.log(key, value.item())
-            d_loss += value
-        self.logger.log("d_loss", d_loss.item())
+        z = self.sample(len(real))
+        fake = self.feed(G, z, label)
+        real.requires_grad_()
+        fake_output = self.feed(D, fake, label)
+        real_output = self.feed(D, real, label)
 
-        if self.training:
+        losses = {
+            "d_fake_loss": F.relu(1 - fake_output).mean(),
+            "d_real_loss": F.relu(1 + real_output).mean(),
+            "d_gp_loss": self.gp_loss(real, real_output),
+        }
+
+        d_loss = 0
+        for name, loss in losses.items():
+            d_loss += loss
+            logger.add_scalar(name, loss.item())
+        logger.add_scalar("d_loss", d_loss.item())
+
+        if training:
             d_loss.backward()
             d_optimizer.step()
-            self.logger.log("d_lr", d_scheduler.get_last_lr()[0])
+            logger.add_scalar("d_lr", d_optimizer.get_lr())
 
         # train g
-        if self.training:
+        if training:
             g_optimizer.zero_grad()
 
-        g_loss = 0
-        for key, value in self.g_criterion(batch).items():
-            self.logger.log(key, value.item())
-            g_loss += value
-        self.logger.log("g_loss", g_loss.item())
+        z = self.sample(len(real))
+        fake = self.feed(G, z, label)
+        fake_output = self.feed(D, fake, label)
+        g_loss = fake_output.mean()
+        logger.add_scalar("g_loss", g_loss.item())
 
-        if self.training:
+        if training:
             g_loss.backward()
             g_optimizer.step()
-            self.logger.log("g_lr", g_scheduler.get_last_lr()[0])
+            logger.add_scalar("g_lr", g_optimizer.get_lr())
+
+    @zouqi.command
+    def train(self, *args, g_lr=1e-3, d_lr=1e-3, lr=None, **kwargs):
+        self.args.g_lr = g_lr
+        self.args.d_lr = d_lr
+        super().train(*args, **kwargs)

@@ -53,7 +53,9 @@ class ConfigParser:
         data = parse_yaml(self.path)
         if command in data:
             data = {**data, **data[command]}
-        del data["default"]
+
+        if "default" in data:
+            del data["default"]
 
         if "runner" not in data:
             raise ValueError(
