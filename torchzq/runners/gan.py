@@ -12,7 +12,7 @@ from torchvision.utils import save_image
 import zouqi
 from torchzq.runners.base import BaseRunner
 from torchzq.parsing import union, optional, lambda_
-from torchzq.scheduler import SchedulerDict, create_scheduler
+from torchzq.scheduler import Scheduler
 
 try:
     from contextlib import nullcontext
@@ -47,14 +47,18 @@ class GANRunner(BaseRunner):
     def gp_loss(self, images, outputs):
         n = images.shape[0]
 
-        grad = torch.autograd.grad(
-            outputs=outputs,
-            inputs=images,
-            grad_outputs=torch.ones_like(outputs),
-            create_graph=True,
-            retain_graph=True,
-            only_inputs=True,
-        )[0]
+        try:
+            grad = torch.autograd.grad(
+                outputs=outputs,
+                inputs=images,
+                grad_outputs=torch.ones_like(outputs),
+                create_graph=True,
+                retain_graph=True,
+                only_inputs=True,
+            )[0]
+        except:
+            # during validation, no_grad is set.
+            return 0
 
         grad = grad.view(n, -1)
 
@@ -70,9 +74,10 @@ class GANRunner(BaseRunner):
 
     def create_scheduler(self):
         args = self.args
-        args.g_lr = create_scheduler(args.g_lr)
-        args.d_lr = create_scheduler(args.d_lr)
-        return SchedulerDict(g_lr=args.g_lr, d_lr=args.d_lr)
+        scheduler = Scheduler()
+        args.g_lr = scheduler.schedule(args.g_lr)
+        args.d_lr = scheduler.schedule(args.d_lr)
+        return scheduler
 
     @staticmethod
     def feed(model, z, label):

@@ -76,7 +76,7 @@ class Runner(torchzq.LegacyRunner):
                     ),
                 ),
                 batch_size=args.batch_size,
-                shuffle=True,
+                shuffle=False,
             )
 
     def prepare_batch(self, batch):
@@ -93,12 +93,15 @@ class Runner(torchzq.LegacyRunner):
 
     @torchzq.command
     def test(self, epoch=None, split="test"):
-        model, logger, pbar = self.prepare_test("test", split, epoch)
+        model, pbar, logger = self.prepare_test("test", split, epoch)
         fake, real = [], []
         for batch in pbar:
             x, y = self.prepare_batch(batch)
             fake += model(x).argmax(dim=-1).cpu().tolist()
             real += y.cpu().tolist()
+        self.evaluate(fake, real)
+
+    def evaluate(self, x, y):
         x = torch.tensor(x)
         y = torch.tensor(y)
         correct = (x == y).sum()

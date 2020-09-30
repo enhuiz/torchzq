@@ -16,7 +16,7 @@ from torchzq.parsing import union, lambda_, str2bool, optional, ignored, flag
 from torchzq.saver import Saver
 from torchzq.logging import Logger
 from torchzq.utils import Timer
-from torchzq.scheduler import SchedulerDict, create_scheduler
+from torchzq.scheduler import Scheduler
 
 
 class BaseRunner(zouqi.Runner):
@@ -32,7 +32,6 @@ class BaseRunner(zouqi.Runner):
         self.add_argument("--quiet", action="store_true")
         self.add_argument("--amp-level", choices=["O0", "O1", "O2", "O3"])
         args = self.parse_args()
-
         self.saver = Saver(args.ckpt_dir / self.name)
 
     @property
@@ -154,11 +153,10 @@ class BaseRunner(zouqi.Runner):
         return pbar
 
     def create_scheduler(self):
-        schedulers = {}
+        scheduler = Scheduler()
         if self.command == "train":
-            self.args.lr = create_scheduler(self.args.lr)
-            schedulers["lr"] = self.args.lr
-        return SchedulerDict(**schedulers)
+            self.args.lr = scheduler.schedule(self.args.lr)
+        return scheduler
 
     def prepare_batch(self, batch):
         raise NotImplementedError
@@ -228,7 +226,7 @@ class BaseRunner(zouqi.Runner):
             epoch: epoch to load, only when model is None
             model: loaded model
         Returns:
-            model, logger, pbar
+            model, pbar, logger
         """
         args = self.args
 
@@ -242,11 +240,14 @@ class BaseRunner(zouqi.Runner):
         model.eval()
 
         dl = self.create_data_loader(split)
-        logger = self.create_logger(f"{name}/{model.epoch}", f"{name}/")
-
         pbar = self.create_pbar(dl)
 
-        return model, logger, pbar
+        logger = self.create_logger(
+            f"{name}/{split}/{model.epoch}",
+            f"{name}/{split}/",
+        )
+
+        return model, pbar, logger
 
     @zouqi.command
     @torch.no_grad()
@@ -256,7 +257,7 @@ class BaseRunner(zouqi.Runner):
         model: ignored = None,
         split: str = "validate",
     ):
-        model, logger, pbar = self.prepare_test("val", split, epoch, model)
+        model, pbar, logger = self.prepare_test(f"val", split, epoch, model)
 
         pbar.set_description(f"Validate: @{model.epoch}")
         for index, batch in enumerate(pbar):

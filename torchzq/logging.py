@@ -52,7 +52,8 @@ class Logger(SummaryWriter):
     @staticmethod
     def _prettify(value):
         try:
-            value = f"{value:.4g}"
+            if int(value) != value:
+                value = f"{value:.4g}"
         except:
             pass
         return value
