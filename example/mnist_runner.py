@@ -39,16 +39,14 @@ class Net(nn.Module):
 
 class Runner(torchzq.LegacyRunner):
     def __init__(self):
-        parser = argparse.ArgumentParser(description=__doc__)
-        parser.add_argument("--test-batch-size", default=1000)
-        super().__init__(parser, "mnist", save_every=1, epochs=10)
+        super().__init__()
 
     def create_model(self):
         return Net()
 
-    def create_data_loader(self):
+    def create_data_loader(self, split):
         args = self.args
-        if self.training:
+        if split == "train":
             return torch.utils.data.DataLoader(
                 datasets.MNIST(
                     "../data",
@@ -76,7 +74,7 @@ class Runner(torchzq.LegacyRunner):
                         ]
                     ),
                 ),
-                batch_size=args.test_batch_size,
+                batch_size=args.batch_size,
                 shuffle=True,
             )
 

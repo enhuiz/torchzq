@@ -1,5 +1,6 @@
 import os
 import tqdm
+import time
 import shutil
 import argparse
 import inspect
@@ -9,78 +10,34 @@ import torch.nn as nn
 from collections import defaultdict
 from torch.utils.data import DataLoader
 from pathlib import Path
-from torch.optim.lr_scheduler import LambdaLR
 
-from torchzq.checkpoint import Checkpoint
-from torchzq.parsing import union, lambda_, str2bool
-from torchzq.logging import Logger, message_box, Timer
+import zouqi
+from torchzq.parsing import union, lambda_, str2bool, optional, ignored, flag
+from torchzq.saver import Saver
+from torchzq.logging import Logger
+from torchzq.utils import Timer
+from torchzq.scheduler import SchedulerDict, create_scheduler
 
 
-class BaseRunner(object):
-    def __init__(
-        self,
-        parser=None,
-        name="Unnamed",
-        batch_size=128,
-        epochs=100,
-        lr=1e-3,
-        save_every=5,
-        update_every=1,
-    ):
-        """args passed will be used as defaults."""
-        parser = parser or argparse.ArgumentParser()
-        parser.add_argument("command")
-        parser.add_argument("--name", type=str, default=name)
-        parser.add_argument("--lr", type=union(float, lambda_), default=lr)
-        parser.add_argument("--weight-decay", type=float, default=0)
-        parser.add_argument("--batch-size", type=int, default=batch_size)
-        parser.add_argument("--epochs", type=int, default=epochs)
-        parser.add_argument("--nj", type=int, default=os.cpu_count())
-        parser.add_argument("--device", default="cuda")
-        parser.add_argument("--last-epoch", type=int, default=None)
-        parser.add_argument("--save-every", type=int, default=save_every)
-        parser.add_argument("--continue", action="store_true")
-        parser.add_argument("--update-every", type=int, default=update_every)
-        parser.add_argument("--ckpt-dir", type=Path, default="ckpt")
-        parser.add_argument("--log-dir", type=Path, default="logs")
-        parser.add_argument("--recording", type=str2bool, default=True)
-        parser.add_argument("--amp-level", choices=["O0", "O1", "O2", "O3"])
-        parser.add_argument("--strict-loading", type=str2bool, default=True)
-        parser.add_argument("--quiet", action="store_true")
-        args = parser.parse_args()
+class BaseRunner(zouqi.Runner):
+    def __init__(self, **kwargs):
+        super().__init__(verbose=True, **kwargs)
+        self.add_argument("--name", type=str, default="Unnamed")
+        self.add_argument("--batch-size", type=int, default=32)
+        self.add_argument("--nj", type=int, default=min(os.cpu_count(), 12))
+        self.add_argument("--device", default="cuda")
+        self.add_argument("--ckpt-dir", type=Path, default="ckpt")
+        self.add_argument("--log-dir", type=Path, default="logs")
+        self.add_argument("--strict-loading", type=str2bool, default=True)
+        self.add_argument("--quiet", action="store_true")
+        self.add_argument("--amp-level", choices=["O0", "O1", "O2", "O3"])
+        args = self.parse_args()
 
-        args.continue_ = getattr(args, "continue")
-        delattr(args, "continue")
-        self.args = args
-
-        if self.use_amp:
-            from apex import amp
-
-            self.amp = amp
-
-        lines = [f"{k}: {v}" for k, v in sorted(vars(args).items())]
-        print(message_box("Arguments", "\n".join(lines)))
-
-        self.logger = Logger(
-            dir=Path(args.log_dir, self.name, self.command) if args.recording else None,
-            sma_windows={r"(\S+_)?loss(\S+_)?": 200},
-        )
+        self.saver = Saver(args.ckpt_dir / self.name)
 
     @property
     def name(self):
         return self.args.name
-
-    @property
-    def command(self):
-        return self.args.command
-
-    @property
-    def training(self):
-        return self.command == "train"
-
-    @property
-    def use_amp(self):
-        return self.args.amp_level is not None
 
     @property
     def Dataset(self):
@@ -90,35 +47,19 @@ class BaseRunner(object):
     def Optimizer(self):
         return torch.optim.Adam
 
-    def autofeed(self, callable, override={}, mapping={}):
-        """Priority: 1. override, 2. parsed args 3. parameters' default"""
-        parameters = inspect.signature(callable).parameters
+    def create_logger(self, tag, prefix=""):
+        log_dir = Path(self.args.log_dir, self.name, tag)
+        smoothing = [r"(\S+_)?loss(\S+_)?"]
+        logger = Logger(log_dir, smoothing, prefix)
+        return logger
 
-        def mapped(key):
-            return mapping[key] if key in mapping else key
-
-        def default(key):
-            if parameters[key].default is inspect._empty:
-                raise RuntimeError(f'No default value is set for "{key}"!')
-            return parameters[key].default
-
-        def getval(key):
-            if key in override:
-                return override[key]
-            if hasattr(self.args, mapped(key)):
-                return getattr(self.args, mapped(key))
-            return default(key)
-
-        return callable(**{key: getval(key) for key in parameters})
-
-    def create_dataset(self):
+    def create_dataset(self, split=None):
         raise NotImplementedError
 
-    def create_data_loader(self):
-        args = self.args
+    def create_data_loader(self, split):
         loader = self.autofeed(
             DataLoader,
-            override=dict(dataset=self.create_dataset(), shuffle=self.training),
+            override=dict(dataset=self.create_dataset(split)),
             mapping=dict(num_workers="nj"),
         )
         print("Dataset size:", len(loader.dataset))
@@ -127,81 +68,44 @@ class BaseRunner(object):
     def create_model(self):
         raise NotImplementedError
 
-    def create_checkpoint(self, model=None):
-        args = self.args
+    def prepare_amp(self, model, optimizer=None):
+        if optimizer is None:
+            args = [model]
+        else:
+            args = [model, optimizer]
 
-        if model is None:
-            model = self.model
+        try:
+            from apex import amp
+        except:
+            amp = None
 
-        return Checkpoint(
-            root=args.ckpt_dir / self.name,
-            model=model,
-            optimizer=self.optimizer if self.training else None,
-            amp=self.amp if self.use_amp else None,
-            continue_=args.continue_,
-            last_epoch=args.last_epoch,
-        )
+        amp_level = self.args.amp_level
+        if amp_level is not None and amp is not None:
+            args = list(amp.initialize(*args, opt_level=amp_level))
+        else:
+            amp = None
 
-    def create_optimizer(self, model=None):
-        if model is None:
-            model = self.model
+        args[0].amp = amp
 
-        params = [{"params": model.parameters(), "initial_lr": 1}]
-        optimizer = self.autofeed(self.Optimizer, dict(params=params, lr=1))
+        if len(args) == 1:
+            return args[0]
 
-        def to(device):
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if torch.is_tensor(v):
-                        state[k] = v.to(device)
+        return tuple(args)
 
-        optimizer.to = to
+    def create_optimizer(self, model):
+        optimizer = self.autofeed(self.Optimizer, dict(params=model.parameters()))
+
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(self.args.device)
 
         return optimizer
 
-    def create_scheduler(self, optimizer=None, lr=None, last_epoch=None):
-        if optimizer is None:
-            optimizer = self.optimizer
-
-        if lr is None:
-            lr = self.args.lr
-
-        if last_epoch is None:
-            last_epoch = self.checkpoint.last_epoch
-
-        if isinstance(lr, float):
-            return LambdaLR(optimizer, lambda _: lr, last_epoch)
-
-        return LambdaLR(optimizer, lr, last_epoch)
-
-    def run(self):
-        func = getattr(self, self.command, None)
-        if func is None:
-            print(f"Command '{self.command}' does not exist.")
-        else:
-            func()
-
-    def update(self, batch):
-        raise NotImplementedError
-
-    def prepare_train(self):
-        self.loader = self.create_data_loader()
-        self.model = self.create_model().train()
-        self.optimizer = self.create_optimizer()
-        self.model.to(self.args.device)
-        self.optimizer.to(self.args.device)
-        if self.use_amp:
-            self.model, self.optimizer = self.amp.initialize(
-                self.model, self.optimizer, opt_level="O2"
-            )
-        self.checkpoint = self.create_checkpoint()
-        self.scheduler = self.create_scheduler()
-        self.checkpoint.load(self.args.strict_loading)
-
-    def create_pbar(self):
+    def create_pbar(self, loader):
         args = self.args
 
-        pbar = tqdm.tqdm(self.loader, dynamic_ncols=True, disable=args.quiet)
+        pbar = tqdm.tqdm(loader, dynamic_ncols=True, disable=args.quiet)
 
         close = pbar.close
 
@@ -213,7 +117,7 @@ class BaseRunner(object):
 
             timer = Timer(10)
 
-            def set_item(i, s):
+            def set_line(i, s):
                 items[i] = s
                 if timer.timeup():
                     line.set_postfix_str(", ".join(items.values()) + "\n")
@@ -226,7 +130,7 @@ class BaseRunner(object):
         else:
             lines = defaultdict(create_line)
 
-            def set_item(i, s):
+            def set_line(i, s):
                 lines[i].set_postfix_str(s)
 
             def close_all():
@@ -234,52 +138,111 @@ class BaseRunner(object):
                 for line in lines.values():
                     line.close()
 
-        pbar.set_item = set_item
+        pbar.set_line = set_line
         pbar.close = close_all
 
         return pbar
 
+    def create_scheduler(self):
+        schedulers = {}
+        if hasattr(self.args, "lr"):
+            self.args.lr = create_scheduler(self.args.lr)
+            schedulers["lr"] = self.args.lr
+        return SchedulerDict(**schedulers)
+
     def prepare_batch(self, batch):
         raise NotImplementedError
 
-    def train(self):
+    @staticmethod
+    def step(batch, model, logger, optimizer=None):
+        """
+        A stateless step function
+        """
+        raise NotImplementedError
+
+    @zouqi.command
+    def train(
+        self,
+        lr: union(float, str) = 1e-3,
+        weight_decay: float = 0,
+        max_epochs: int = 100,
+        save_every: int = 1,
+        validate_every: int = 2,
+        shuffle: str2bool = True,
+        continue_: flag = False,
+        epoch: optional(int) = None,
+    ):
+        self.update_args(self.train.args)
         args = self.args
-        self.prepare_train()
-        epoch_start = self.checkpoint.last_epoch + 1
-        epoch_stop = self.checkpoint.last_epoch + 1 + args.epochs
-        for self.epoch in range(epoch_start, epoch_stop):
-            pbar = self.create_pbar()
-            pbar.set_description(f"Epoch: {self.epoch}/{epoch_stop}")
-            for self.step, batch in enumerate(pbar, self.epoch * len(self.loader)):
-                self.logger.log("step", self.step)
+
+        model = self.create_model().to(args.device).train()
+        optimizer = self.create_optimizer(model)
+        model, optimizer = self.prepare_amp(model, optimizer)
+
+        if not self.saver.empty and not continue_:
+            print("Some checkpoints exist and continue not set, skip training.")
+            exit()
+
+        if continue_:
+            self.saver.load(model, optimizer, epoch=epoch, strict=args.strict_loading)
+
+        scheduler = self.create_scheduler()
+
+        dl = self.create_data_loader("train")
+        logger = self.create_logger("train")
+
+        start_epoch = model.epoch
+
+        for model.epoch in range(start_epoch, max_epochs + 1):
+            pbar = self.create_pbar(dl)
+            pbar.set_description(f"Epoch: {epoch}/{max_epochs}")
+            for model.iteration, batch in enumerate(pbar, epoch * len(dl)):
+                scheduler.step(model.epoch, model.iteration)
                 batch = self.prepare_batch(batch)
-                self.update(batch)
-                for i, item in enumerate(self.logger.render(["step"])):
-                    pbar.set_item(i, item)
-            self.scheduler.step()
-            if (self.epoch + 1) % self.args.save_every == 0:
-                self.checkpoint.save(self.epoch)
+                self.step(batch, model, logger, optimizer)
+                for i, line in enumerate(logger.render(iteration)):
+                    pbar.set_line(i, line)
+            # after training, the model has grown up by 1 epoch.
+            model.epoch += 1
+            if model.epoch % save_every == 0:
+                self.saver.save(model, optimizer, iteration=iteration)
+            if model.epoch % validate_every == 0:
+                val_logger = self.validate(model)
+                model.train()
+
             pbar.close()
 
-    def prepare_test(self):
-        self.loader = self.create_data_loader()
-        self.model = self.create_model().eval()
-        self.model.to(self.args.device)
-        if self.use_amp:
-            self.model = self.amp.initialize(self.model, opt_level="O2")
-        self.checkpoint = self.create_checkpoint()
-        self.checkpoint.load(self.args.strict_loading)
+    @zouqi.command
+    @torch.no_grad()
+    def validate(self, epoch: int = None, model: ignored = None):
+        args = self.args
 
-    def test(self):
-        self.prepare_test()
-        pbar = self.create_pbar()
-        for self.step, batch in enumerate(pbar):
-            self.logger.log("step", self.step)
+        if model is None:
+            model = self.create_model().to(args.device)
+            model = self.prepare_amp(model)
+            self.saver.load(model, epoch=epoch, strict=args.strict_loading)
+
+        model.eval()
+
+        dl = self.create_data_loader("validate")
+        logger = self.create_logger(f"validate/{epoch}", "val/")
+        scheduler = self.create_scheduler()
+        scheduler.step(model.epoch, model.iteration)
+
+        pbar = self.create_pbar(dl)
+        pbar.set_description(f"Validating: {model.epoch}")
+        for index, batch in enumerate(pbar):
             batch = self.prepare_batch(batch)
-            self.update(batch)
-            for i, item in enumerate(self.logger.render(["step"])):
-                pbar.set_item(i, item)
-        pbar.close()
+            self.step(batch, model, logger)
+            for i, line in enumerate(logger.render(index)):
+                pbar.set_line(i, line)
+
+        mean = lambda l: sum(l) / len(l)
+        for key in logger:
+            if "loss" in key:
+                print(f"Average {key}: {logger.average(key):.4g}")
+
+        return logger
 
     @staticmethod
     def try_rmtree(path):

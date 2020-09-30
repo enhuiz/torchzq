@@ -11,11 +11,12 @@ from .utils import EMAMeter
 
 
 class Logger(SummaryWriter):
-    def __init__(self, log_dir, smoothing=[], **kwargs):
+    def __init__(self, log_dir, smoothing=[], prefix="", **kwargs):
         super().__init__(log_dir, **kwargs)
         self._smoothing = smoothing
+        self._prefix = prefix
         self._meters = defaultdict(EMAMeter)
-        self._buffer = {}
+        self._buffer = defaultdict(list)
         self._delayed_addings = []
         self._make_delayed_adders()
 
@@ -29,10 +30,11 @@ class Logger(SummaryWriter):
             if name.startswith("add_") and "global_step" in parameters:
 
                 def delayed(tag, value, _name=name, _method=method, **kwargs):
+                    tag = self._prefix + tag
                     curried = partial(_method, tag, value, **kwargs)
                     self._delayed_addings.append(curried)
                     if _name in ["add_scalar", "add_text"]:
-                        self._buffer[tag] = value
+                        self._buffer[tag].append(value)
 
                 setattr(self, name, delayed)
 
@@ -53,11 +55,11 @@ class Logger(SummaryWriter):
             value = f"{value:.4g}"
         return value
 
-    def _render_value(self, key):
-        value = self._buffer[key]
+    def _render_value(self, tag):
+        value = self._buffer[tag][-1]
         for pattern in self._smoothing:
-            if re.match(pattern, key) is not None:
-                value = self._meters[key](value)
+            if re.match(pattern, tag) is not None:
+                value = self._meters[tag](value)
         return self._prettify(value)
 
     def _perform_addings(self, global_step):
@@ -68,10 +70,27 @@ class Logger(SummaryWriter):
 
     def render(self, global_step, priority=[]):
         self._perform_addings(global_step)
-        keys = self._priortize(self._buffer.keys(), priority)
-        lines = [f"{key}: {self._render_value(key)}" for key in keys]
-        self._buffer.clear()
+        self._buffer["step"].append(global_step)
+        priority = ["step"] + priority
+        tags = self._priortize(self._buffer, priority)
+        lines = [f"{tag}: {self._render_value(tag)}" for tag in tags]
         return lines
+
+    def keys(self):
+        yield from self._buffer.keys()
+
+    def values(self):
+        yield from self._buffer.values()
+
+    def items(self):
+        yield from self._buffer.items()
+
+    def average(self, tag):
+        values = self._buffer[tag]
+        return sum(values) / len(values)
+
+    def __iter__(self):
+        yield from self._buffer
 
 
 if __name__ == "__main__":
