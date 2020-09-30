@@ -1,4 +1,6 @@
 default: [example/default_config.yml, example/default_config.yml]
 name: mnist
 runner: example/mnist_runner.py
-lr: "lambda epoch: 0.001 * 0.95**epoch"
+
+train:
+  lr: "Lambda('lambda epoch: 0.001 * 0.95**epoch', epochwise=True)"

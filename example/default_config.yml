@@ -1,2 +1,4 @@
 name: default
-epoch: 1
+
+train:
+  epochs: 1
