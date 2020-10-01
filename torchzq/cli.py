@@ -61,6 +61,12 @@ class ConfigParser:
     def normalize_key(key):
         return "--" + key.replace("_", "-").lstrip("-")
 
+    @staticmethod
+    def normalize_value(value):
+        if " " in str(value) or "(" in str(value):
+            value = f'"{value}"'
+        return value
+
     def parse_cmd(self, command, manual_options=[]):
         data = parse_yaml(self.path, command)
 
@@ -76,17 +82,13 @@ class ConfigParser:
         del data["runner"]
 
         options = []
-        for k, v in list(data.items()):
-            options.append(f'{self.normalize_key(k)} "{v}"')
-
-        for kv in self.parse_manual_options(manual_options):
+        for kv in list(data.items()) + self.parse_manual_options(manual_options):
             try:
                 k, v = kv
-                options.append(f'{self.normalize_key(k)} "{v}"')
+                options.append(f"{self.normalize_key(k)} {self.normalize_value(v)}")
             except:
                 (k,) = kv
                 options.append(f"{self.normalize_key(k)}")
-
         return f"{runner} {command} " + " ".join(options)
 
 
