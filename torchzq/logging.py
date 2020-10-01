@@ -11,10 +11,18 @@ from .utils import EMAMeter
 
 
 class Logger(SummaryWriter):
-    def __init__(self, log_dir, smoothing=[], prefix="", **kwargs):
+    def __init__(self, log_dir, smoothing=[], postfix="", **kwargs):
+        """
+        Args:
+            *args, **kwargs
+            postfix: postfix appended to the tag when added to tensorboard.
+        """
         super().__init__(log_dir, **kwargs)
+        postfix = re.sub("/+", "/", str(postfix).strip("/"))
+        if postfix:
+            postfix = "/" + postfix
         self._smoothing = smoothing
-        self._prefix = prefix
+        self._postfix = postfix
         self._meters = defaultdict(EMAMeter)
         self._buffer = defaultdict(list)
         self._delayed_addings = []
@@ -30,8 +38,7 @@ class Logger(SummaryWriter):
             if name.startswith("add_") and "global_step" in parameters:
 
                 def delayed(tag, value, _name=name, _method=method, **kwargs):
-                    tag = self._prefix + tag
-                    curried = partial(_method, tag, value, **kwargs)
+                    curried = partial(_method, tag + self._postfix, value, **kwargs)
                     self._delayed_addings.append(curried)
                     if _name in ["add_scalar", "add_text"]:
                         self._buffer[tag].append(value)

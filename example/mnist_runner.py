@@ -92,7 +92,8 @@ class Runner(torchzq.LegacyRunner):
         return F.nll_loss(x, y)
 
     @torchzq.command
-    def test(self, epoch=None, split="test"):
+    def test(self, epoch=None):
+        split = self.args.split or "test"
         model, pbar, logger = self.prepare_test("test", split, epoch)
         fake, real = [], []
         for batch in pbar:

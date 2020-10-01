@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 
 import zouqi
-from torchzq.parsing import union, lambda_, str2bool, optional, ignored, flag
+from torchzq.parsing import union, lambda_, str2bool, ignored, flag
 from torchzq.saver import Saver
 from torchzq.logging import Logger
 from torchzq.utils import Timer
@@ -31,6 +31,7 @@ class BaseRunner(zouqi.Runner):
         self.add_argument("--strict-loading", type=str2bool, default=True)
         self.add_argument("--quiet", action="store_true")
         self.add_argument("--amp-level", choices=["O0", "O1", "O2", "O3"])
+        self.add_argument("--split", type=str, default=None)
         args = self.parse_args()
         self.saver = Saver(args.ckpt_dir / self.name)
 
@@ -46,10 +47,26 @@ class BaseRunner(zouqi.Runner):
     def Optimizer(self):
         return torch.optim.Adam
 
-    def create_logger(self, tag, prefix=""):
-        log_dir = Path(self.args.log_dir, self.name, tag)
+    @staticmethod
+    def get_test_dir(root, action, split, label=None):
+        parts = map(lambda s: s.lstrip("/"), [action, split, label or ""])
+        return Path(root, *parts)
+
+    def create_logger(self, action, split, label=None):
+        """Create a logger to {log_dir / name / action / split / (label)},
+           keys will have the prefix {action/split}.
+        Args:
+            action: train/validate/test etc.
+            split: data split
+            label: a short name to differentiate different experiments
+        Returns:
+            logger
+        """
+        args = self.args
+        log_dir = self.get_test_dir(args.log_dir, action, split, label)
         smoothing = [r"(\S+_)?loss(\S+_)?"]
-        logger = Logger(log_dir, smoothing, prefix)
+        postfix = log_dir.relative_to(args.log_dir)
+        logger = Logger(log_dir, smoothing, postfix=postfix)
         return logger
 
     def create_dataset(self, split=None):
@@ -171,10 +188,10 @@ class BaseRunner(zouqi.Runner):
         weight_decay: float = 0,
         max_epochs: int = 100,
         save_every: int = 1,
-        validate_every: int = 100,
+        validate_every: int = None,
         shuffle: str2bool = True,
         continue_: flag = False,
-        epoch: optional(int) = None,
+        epoch: int = None,
     ):
         self.update_args(self.train.args)
         args = self.args
@@ -191,8 +208,9 @@ class BaseRunner(zouqi.Runner):
 
         scheduler = self.create_scheduler()
 
-        dl = self.create_data_loader("train")
-        logger = self.create_logger("train")
+        split = args.split or "train"
+        dl = self.create_data_loader(split)
+        logger = self.create_logger("train", split)
 
         start_epoch = model.epoch
 
@@ -212,16 +230,16 @@ class BaseRunner(zouqi.Runner):
 
             if model.epoch % save_every == 0:
                 self.saver.save(model, optimizer)
-            if model.epoch % validate_every == 0:
+            if validate_every and model.epoch % validate_every == 0:
                 val_logger = self.validate(model=model)
                 model.train()
 
             pbar.close()
 
-    def prepare_test(self, name, split, epoch=None, model=None):
+    def prepare_test(self, action, split, epoch=None, model=None, label=None):
         """
         Args:
-            name: name of this test
+            action: logger action
             split: data split
             epoch: epoch to load, only when model is None
             model: loaded model
@@ -242,24 +260,24 @@ class BaseRunner(zouqi.Runner):
         dl = self.create_data_loader(split)
         pbar = self.create_pbar(dl)
 
-        logger = self.create_logger(
-            f"{name}/{split}/{model.epoch}",
-            f"{name}/{split}/",
-        )
+        label = f"{label or ''}/{model.epoch}"
+        logger = self.create_logger(action, split, label)
 
         return model, pbar, logger
 
     @zouqi.command
     @torch.no_grad()
-    def validate(
-        self,
-        epoch: int = None,
-        model: ignored = None,
-        split: str = "validate",
-    ):
-        model, pbar, logger = self.prepare_test(f"val", split, epoch, model)
+    def validate(self, epoch: int = None, model: ignored = None):
+        args = self.args
 
-        pbar.set_description(f"Validate: @{model.epoch}")
+        model, pbar, logger = self.prepare_test(
+            action="validate",
+            split=args.split or "validate",
+            epoch=epoch,
+            model=model,
+        )
+
+        pbar.set_description(f"Validate @{model.epoch}")
         for index, batch in enumerate(pbar):
             batch = self.prepare_batch(batch)
             self.step(batch, model, logger)
