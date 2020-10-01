@@ -58,7 +58,7 @@ class GANRunner(BaseRunner):
             )[0]
         except:
             # during validation, no_grad is set.
-            return 0
+            return torch.zeros([])
 
         grad = grad.view(n, -1)
 
@@ -75,8 +75,9 @@ class GANRunner(BaseRunner):
     def create_scheduler(self):
         args = self.args
         scheduler = Scheduler()
-        args.g_lr = scheduler.schedule(args.g_lr)
-        args.d_lr = scheduler.schedule(args.d_lr)
+        if self.command == "train":
+            args.g_lr = scheduler.schedule(args.g_lr)
+            args.d_lr = scheduler.schedule(args.d_lr)
         return scheduler
 
     @staticmethod
