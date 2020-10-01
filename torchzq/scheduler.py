@@ -67,7 +67,8 @@ class Lambda(_ScheduleFunction):
 
 
 class Logistic(_ScheduleFunction):
-    def __init__(self, k, start, upper):
+    def __init__(self, k, start, upper, epochwise=True):
+        super().__init__(epochwise)
         self.k = k
         self.start = start
         self.upper = upper
