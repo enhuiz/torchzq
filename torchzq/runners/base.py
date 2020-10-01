@@ -196,6 +196,8 @@ class BaseRunner(zouqi.Runner):
         self.update_args(self.train.args)
         args = self.args
 
+        scheduler = self.create_scheduler()
+
         model = self.create_model().to(args.device).train()
         optimizer = self.create_optimizer(model)
         model, optimizer = self.prepare_amp(model, optimizer)
@@ -205,8 +207,6 @@ class BaseRunner(zouqi.Runner):
             exit()
 
         self.saver.load(model, optimizer, epoch=epoch, strict=args.strict_loading)
-
-        scheduler = self.create_scheduler()
 
         split = args.split or "train"
         dl = self.create_data_loader(split)
@@ -249,10 +249,10 @@ class BaseRunner(zouqi.Runner):
         args = self.args
 
         if model is None:
+            scheduler = self.create_scheduler()
             model = self.create_model().to(args.device)
             model = self.prepare_amp(model)
             self.saver.load(model, epoch=epoch, strict=args.strict_loading)
-            scheduler = self.create_scheduler()
             scheduler.step(model.epoch, model.iteration)
 
         model.eval()
