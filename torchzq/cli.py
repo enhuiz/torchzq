@@ -26,8 +26,11 @@ def update_tree(a, b):
 def parse_yaml(path):
     data = load_yaml(path)
     result = {}
-    for path in data.get("default", []):
-        result = parse_yaml(path)
+    defaults = data.get("default", [])
+    if type(defaults) is not list:
+        defaults = [defaults]
+    for path in defaults:
+        update_tree(result, parse_yaml(path))
     update_tree(result, data)
     return result
 
