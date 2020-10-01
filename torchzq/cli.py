@@ -3,7 +3,7 @@ import sys
 import yaml
 
 
-def load_yaml(path):
+def load_yaml(path, command):
     data = {}
     with open(path, "r") as f:
         # remove the blank at the end of lines
@@ -12,6 +12,15 @@ def load_yaml(path):
         data = "\n".join([l.rstrip() for l in lines])
         data = yaml.load(data, Loader=yaml.FullLoader)
     data = data or {}
+
+    if command in data:
+        data = {**data, **data[command]}
+
+    # except for command, only support first level
+    for key in list(data.keys()):
+        if type(data[key]) is dict:
+            del data[key]
+
     return data
 
 
@@ -23,14 +32,14 @@ def update_tree(a, b):
             a[k] = b[k]
 
 
-def parse_yaml(path):
-    data = load_yaml(path)
+def parse_yaml(path, command):
+    data = load_yaml(path, command)
     result = {}
     defaults = data.get("default", [])
     if type(defaults) is not list:
         defaults = [defaults]
     for path in defaults:
-        update_tree(result, parse_yaml(path))
+        update_tree(result, parse_yaml(path, command))
     update_tree(result, data)
     return result
 
@@ -53,9 +62,7 @@ class ConfigParser:
         return "--" + key.replace("_", "-").lstrip("-")
 
     def parse_cmd(self, command, manual_options=[]):
-        data = parse_yaml(self.path)
-        if command in data:
-            data = {**data, **data[command]}
+        data = parse_yaml(self.path, command)
 
         if "default" in data:
             del data["default"]
@@ -70,8 +77,7 @@ class ConfigParser:
 
         options = []
         for k, v in list(data.items()):
-            if type(v) is not dict:
-                options.append(f'{self.normalize_key(k)} "{v}"')
+            options.append(f'{self.normalize_key(k)} "{v}"')
 
         for kv in self.parse_manual_options(manual_options):
             try:
