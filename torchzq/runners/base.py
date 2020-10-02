@@ -47,11 +47,6 @@ class BaseRunner(zouqi.Runner):
     def Optimizer(self):
         return torch.optim.Adam
 
-    @staticmethod
-    def get_test_dir(root, action, split, label=None):
-        parts = map(lambda s: s.lstrip("/"), [action, split, label or ""])
-        return Path(root, *parts)
-
     def create_logger(self, action, split, label=None):
         """Create a logger to {log_dir / name / action / split / (label)},
            keys will have the prefix {action/split}.
@@ -63,7 +58,8 @@ class BaseRunner(zouqi.Runner):
             logger
         """
         args = self.args
-        log_dir = self.get_test_dir(args.log_dir, action, split, label)
+        parts = map(lambda s: s.lstrip("/"), [self.name, action, split, label])
+        log_dir = Path(args.log_dir, *parts)
         smoothing = [r"(\S+_)?loss(\S+_)?"]
         postfix = log_dir.relative_to(args.log_dir)
         logger = Logger(log_dir, smoothing, postfix=postfix)
