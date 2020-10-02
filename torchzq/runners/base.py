@@ -68,11 +68,16 @@ class BaseRunner(zouqi.Runner):
     def create_dataset(self, split=None):
         raise NotImplementedError
 
-    def create_data_loader(self, split):
+    def create_data_loader(self, split, shuffle=False):
         loader = self.autofeed(
             DataLoader,
-            override=dict(dataset=self.create_dataset(split)),
-            mapping=dict(num_workers="nj"),
+            override=dict(
+                dataset=self.create_dataset(split),
+                shuffle=shuffle,
+            ),
+            mapping=dict(
+                num_workers="nj",
+            ),
         )
         print("Dataset size:", len(loader.dataset))
         return loader
@@ -185,7 +190,6 @@ class BaseRunner(zouqi.Runner):
         max_epochs: int = 100,
         save_every: int = 1,
         validate_every: int = None,
-        shuffle: str2bool = True,
         continue_: flag = False,
         epoch: int = None,
     ):
@@ -205,7 +209,7 @@ class BaseRunner(zouqi.Runner):
         self.saver.load(model, optimizer, epoch=epoch, strict=args.strict_loading)
 
         split = args.split or "train"
-        dl = self.create_data_loader(split)
+        dl = self.create_data_loader(split, True)
         logger = self.create_logger("train", split)
 
         start_epoch = model.epoch
