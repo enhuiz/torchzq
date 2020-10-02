@@ -58,7 +58,7 @@ class BaseRunner(zouqi.Runner):
             logger
         """
         args = self.args
-        parts = map(lambda s: s.lstrip("/"), [self.name, action, split, label])
+        parts = map(lambda s: s.lstrip("/"), [self.name, action, split, label or ""])
         log_dir = Path(args.log_dir, *parts)
         smoothing = [r"(\S+_)?loss(\S+_)?"]
         postfix = log_dir.relative_to(args.log_dir)
