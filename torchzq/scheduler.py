@@ -58,9 +58,9 @@ class Constant(_ScheduleFunction):
 
 
 class Lambda(_ScheduleFunction):
-    def __init__(self, s, epochwise):
+    def __init__(self, f, epochwise):
         super().__init__(epochwise)
-        self.f = eval(s)
+        self.f = f
 
     def __call__(self):
         return self.f(self.n)
