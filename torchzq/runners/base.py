@@ -95,8 +95,6 @@ class BaseRunner(zouqi.Runner):
     def create_logger(self, label=""):
         """Create a logger to {log_dir / name / command / split / (label)},
         Args:
-            command: train/validate/test etc.
-            split: data split
             label: a short name to differentiate different experiments
         Returns:
             logger
@@ -156,13 +154,12 @@ class BaseRunner(zouqi.Runner):
 
         return pbar
 
-    def create_dataset(self, split=None):
+    def create_dataset(self):
         raise NotImplementedError
 
     def create_data_loader(self, **kwargs):
         args = self.args
-        split = args.split or args.command
-        dataset = self.create_dataset(split)
+        dataset = self.create_dataset()
         data_loader = self.autofeed(
             DataLoader,
             override=dict(

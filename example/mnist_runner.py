@@ -45,31 +45,18 @@ class Runner(torchzq.LegacyRunner):
     def create_model(self):
         return Net()
 
-    def create_dataset(self, split):
-        args = self.args
-        if split == "train":
-            return datasets.MNIST(
-                "../data",
-                train=True,
-                download=True,
-                transform=transforms.Compose(
-                    [
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.1307,), (0.3081,)),
-                    ]
-                ),
-            )
-        else:
-            return datasets.MNIST(
-                "../data",
-                train=False,
-                transform=transforms.Compose(
-                    [
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.1307,), (0.3081,)),
-                    ]
-                ),
-            )
+    def create_dataset(self):
+        return datasets.MNIST(
+            "../data",
+            train=self.split == "train",
+            download=True,
+            transform=transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.1307,), (0.3081,)),
+                ]
+            ),
+        )
 
     def prepare_batch(self, batch):
         x, y = batch
