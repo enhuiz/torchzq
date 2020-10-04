@@ -45,38 +45,30 @@ class Runner(torchzq.LegacyRunner):
     def create_model(self):
         return Net()
 
-    def create_data_loader(self, split):
+    def create_dataset(self, split):
         args = self.args
         if split == "train":
-            return torch.utils.data.DataLoader(
-                datasets.MNIST(
-                    "../data",
-                    train=True,
-                    download=True,
-                    transform=transforms.Compose(
-                        [
-                            transforms.ToTensor(),
-                            transforms.Normalize((0.1307,), (0.3081,)),
-                        ]
-                    ),
+            return datasets.MNIST(
+                "../data",
+                train=True,
+                download=True,
+                transform=transforms.Compose(
+                    [
+                        transforms.ToTensor(),
+                        transforms.Normalize((0.1307,), (0.3081,)),
+                    ]
                 ),
-                batch_size=args.batch_size,
-                shuffle=True,
             )
         else:
-            return torch.utils.data.DataLoader(
-                datasets.MNIST(
-                    "../data",
-                    train=False,
-                    transform=transforms.Compose(
-                        [
-                            transforms.ToTensor(),
-                            transforms.Normalize((0.1307,), (0.3081,)),
-                        ]
-                    ),
+            return datasets.MNIST(
+                "../data",
+                train=False,
+                transform=transforms.Compose(
+                    [
+                        transforms.ToTensor(),
+                        transforms.Normalize((0.1307,), (0.3081,)),
+                    ]
                 ),
-                batch_size=args.batch_size,
-                shuffle=False,
             )
 
     def prepare_batch(self, batch):
@@ -92,13 +84,14 @@ class Runner(torchzq.LegacyRunner):
         return F.nll_loss(x, y)
 
     @torchzq.command
-    def test(self, epoch=None):
-        split = self.args.split or "test"
-        model, pbar, logger = self.prepare_test("test", split, epoch)
+    def test(self, epoch=None, label: str = "default"):
+        self.update_args(self.test.args)
+        self.initialize()
+        pbar = self.create_pbar(self.data_loader)
         fake, real = [], []
         for batch in pbar:
             x, y = self.prepare_batch(batch)
-            fake += model(x).argmax(dim=-1).cpu().tolist()
+            fake += self.model(x).argmax(dim=-1).cpu().tolist()
             real += y.cpu().tolist()
         self.evaluate(fake, real)
 

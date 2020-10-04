@@ -19,7 +19,38 @@ from torchzq.utils import Timer
 from torchzq.scheduler import Scheduler
 
 
+class Events:
+    class Event(list):
+        def __call__(self, *args, **kwargs):
+            for f in self:
+                f(*args, **kwargs)
+
+    def __init__(self):
+        self._events = defaultdict(Events.Event)
+
+    @property
+    def epoch_started(self):
+        return self._events["epoch_started"]
+
+    @property
+    def epoch_completed(self):
+        return self._events["epoch_completed"]
+
+    @property
+    def iteration_started(self):
+        return self._events["iteration_started"]
+
+    @property
+    def iteration_completed(self):
+        return self._events["iteration_completed"]
+
+
 class BaseRunner(zouqi.Runner):
+    saver = None
+    scheduler = None
+    model = None
+    optimizer = None
+
     def __init__(self, **kwargs):
         super().__init__(verbose=True, **kwargs)
         self.add_argument("--name", type=str, default="Unnamed")
@@ -32,12 +63,20 @@ class BaseRunner(zouqi.Runner):
         self.add_argument("--quiet", action="store_true")
         self.add_argument("--amp-level", choices=["O0", "O1", "O2", "O3"])
         self.add_argument("--split", type=str, default=None)
-        args = self.parse_args()
-        self.saver = Saver(args.ckpt_dir / self.name)
+        self.events = Events()
 
     @property
     def name(self):
         return self.args.name
+
+    @property
+    def training(self):
+        # do one thing at one time
+        return self.command == "train"
+
+    @property
+    def split(self):
+        return self.args.split or self.args.command
 
     @property
     def Dataset(self):
@@ -47,98 +86,45 @@ class BaseRunner(zouqi.Runner):
     def Optimizer(self):
         return torch.optim.Adam
 
-    def create_logger(self, action, split, label=None):
-        """Create a logger to {log_dir / name / action / split / (label)},
-           keys will have the prefix {action/split}.
+    def create_scheduler(self):
+        scheduler = Scheduler()
+        if self.command == "train":
+            self.args.lr = scheduler.schedule(self.args.lr)
+        return scheduler
+
+    def create_logger(self, label=""):
+        """Create a logger to {log_dir / name / command / split / (label)},
         Args:
-            action: train/validate/test etc.
+            command: train/validate/test etc.
             split: data split
             label: a short name to differentiate different experiments
         Returns:
             logger
         """
         args = self.args
-        parts = map(lambda s: s.lstrip("/"), [self.name, action, split, label or ""])
-        log_dir = Path(args.log_dir, *parts)
-        smoothing = [r"(\S+_)?loss(\S+_)?"]
-        postfix = log_dir.relative_to(args.log_dir)
-        logger = Logger(log_dir, smoothing, postfix=postfix)
+        parts = map(
+            lambda s: s.lstrip("/"),
+            [
+                self.name,
+                self.command,
+                self.split,
+                label,
+            ],
+        )
+        run_log_dir = Path(args.log_dir, *parts)
+        loss_smoothing = [r"(\S+_)?loss(\S+_)?"]
+        postfix = run_log_dir.relative_to(Path(args.log_dir, self.name))
+        logger = Logger(run_log_dir, loss_smoothing, postfix=postfix)
         return logger
 
-    def create_dataset(self, split=None):
-        raise NotImplementedError
-
-    def create_data_loader(self, split, shuffle=False):
-        loader = self.autofeed(
-            DataLoader,
-            override=dict(
-                dataset=self.create_dataset(split),
-                shuffle=shuffle,
-            ),
-            mapping=dict(
-                num_workers="nj",
-            ),
-        )
-        print("Dataset size:", len(loader.dataset))
-        return loader
-
-    def create_model(self):
-        raise NotImplementedError
-
-    def prepare_amp(self, model, optimizer=None):
-        if optimizer is None:
-            args = [model]
-        else:
-            args = [model, optimizer]
-
-        try:
-            from apex import amp
-        except:
-            amp = None
-
-        amp_level = self.args.amp_level
-        if amp_level is not None and amp is not None:
-            args = list(amp.initialize(*args, opt_level=amp_level))
-        else:
-            amp = None
-
-        args[0].amp = amp
-
-        if len(args) == 1:
-            return args[0]
-
-        return tuple(args)
-
-    def create_optimizer(self, model):
-        optimizer = self.autofeed(self.Optimizer, dict(params=model.parameters(), lr=1))
-
-        for state in optimizer.state.values():
-            for k, v in state.items():
-                if torch.is_tensor(v):
-                    state[k] = v.to(self.args.device)
-
-        def get_lr():
-            return optimizer.param_groups[0]["lr"]
-
-        def set_lr(lr):
-            for g in optimizer.param_groups:
-                g["lr"] = lr
-
-        optimizer.get_lr = get_lr
-        optimizer.set_lr = set_lr
-
-        return optimizer
-
-    def create_pbar(self, loader):
-        args = self.args
-
-        pbar = tqdm.tqdm(loader, dynamic_ncols=True, disable=args.quiet)
+    def create_pbar(self, iterable):
+        pbar = tqdm.tqdm(iterable, dynamic_ncols=True, disable=self.args.quiet)
 
         close = pbar.close
 
         create_line = lambda: tqdm.tqdm(bar_format="╰{postfix}")
 
-        if args.quiet:
+        if self.args.quiet:
             items = {}
             line = create_line()
 
@@ -170,17 +156,156 @@ class BaseRunner(zouqi.Runner):
 
         return pbar
 
-    def create_scheduler(self):
-        scheduler = Scheduler()
-        if self.command == "train":
-            self.args.lr = scheduler.schedule(self.args.lr)
-        return scheduler
+    def create_dataset(self, split=None):
+        raise NotImplementedError
+
+    def create_data_loader(self, **kwargs):
+        args = self.args
+        split = args.split or args.command
+        dataset = self.create_dataset(split)
+        data_loader = self.autofeed(
+            DataLoader,
+            override=dict(
+                dataset=dataset,
+                **kwargs,
+            ),
+            mapping=dict(
+                num_workers="nj",
+            ),
+        )
+        print("Dataset size:", len(dataset))
+        return data_loader
+
+    def create_model(self):
+        raise NotImplementedError
+
+    def create_optimizer(self, model):
+        optimizer = self.autofeed(
+            self.Optimizer,
+            dict(params=model.parameters(), lr=1),
+        )
+
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(self.args.device)
+
+        def get_lr():
+            return optimizer.param_groups[0]["lr"]
+
+        def set_lr(lr):
+            for g in optimizer.param_groups:
+                g["lr"] = lr
+
+        optimizer.get_lr = get_lr
+        optimizer.set_lr = set_lr
+
+        return optimizer
+
+    def initialize_amp(self):
+        if self.optimizer is None:
+            args = [self.model]
+        else:
+            args = [self.model, self.optimizer]
+
+        try:
+            from apex import amp
+        except:
+            amp = None
+
+        amp_level = self.args.amp_level
+        if amp_level is not None and amp is not None:
+            args = list(amp.initialize(*args, opt_level=amp_level))
+        else:
+            amp = None
+
+        args[0].amp = amp
+
+        self.model = args[0]
+
+        if len(args) > 1:
+            self.optimizer = args[1]
+
+    def initialize_saver(self):
+        args = self.args
+        self.saver = Saver(args.ckpt_dir / self.name)
+        if self.training and not self.saver.is_empty and not args.continue_:
+            print("Some checkpoints exist and continue not set, skip training.")
+            exit()
+        self.saver.load(
+            self.model,
+            self.optimizer,
+            epoch=args.epoch,
+            strict=args.strict_loading,
+        )
+
+    def initialize(self):
+        args = self.args
+
+        # scheduler
+        self.scheduler = self.create_scheduler()
+
+        # model
+        self.model = self.create_model()
+        self.model.to(args.device)
+        self.model.amp = None
+
+        # optimizer
+        if self.training:
+            self.optimizer = self.create_optimizer(self.model)
+
+        # amp
+        self.initialize_amp()
+
+        # saver
+        self.initialize_saver()
+
+        # logger
+        if self.training:
+            self.data_loader = self.create_data_loader(shuffle=True)
+            self.logger = self.create_logger()
+        else:
+            self.data_loader = self.create_data_loader(shuffle=False)
+            self.logger = self.create_logger(f"{args.label or ''}/{self.model.epoch}")
+
+        # events
+        if self.training:
+
+            def save(epoch):
+                if epoch % args.save_every == 0:
+                    self.saver.save(self.model, self.optimizer)
+
+            self.events.epoch_completed.append(save)
 
     def prepare_batch(self, batch):
         raise NotImplementedError
 
-    def step(self, batch, model, logger, optimizer=None):
+    def step(self, batch):
         raise NotImplementedError
+
+    def train_loop(self):
+        args = self.args
+        model = self.model
+        logger = self.logger
+
+        while model.epoch < args.max_epochs:
+            model.epoch += 1
+            self.events.epoch_started(model.epoch)
+
+            pbar = self.create_pbar(self.data_loader)
+            pbar.set_description(f"Train: {model.epoch}/{args.max_epochs}")
+            for batch in pbar:
+                model.iteration += 1
+                self.events.iteration_started(model.iteration)
+                self.scheduler.step(model.epoch, model.iteration)
+                batch = self.prepare_batch(batch)
+                self.step(batch)
+                for i, line in enumerate(logger.render(model.iteration)):
+                    pbar.set_line(i, line)
+                self.events.iteration_completed(model.iteration)
+            pbar.close()
+
+            self.events.epoch_completed(model.epoch)
 
     @zouqi.command
     def train(
@@ -189,107 +314,38 @@ class BaseRunner(zouqi.Runner):
         weight_decay: float = 0,
         max_epochs: int = 100,
         save_every: int = 1,
-        validate_every: int = None,
         continue_: flag = False,
         epoch: int = None,
     ):
         self.update_args(self.train.args)
-        args = self.args
+        self.initialize()
+        self.train_loop()
 
-        scheduler = self.create_scheduler()
-
-        model = self.create_model().to(args.device).train()
-        optimizer = self.create_optimizer(model)
-        model, optimizer = self.prepare_amp(model, optimizer)
-
-        if not self.saver.empty and not continue_:
-            print("Some checkpoints exist and continue not set, skip training.")
-            exit()
-
-        self.saver.load(model, optimizer, epoch=epoch, strict=args.strict_loading)
-
-        split = args.split or "train"
-        dl = self.create_data_loader(split, True)
-        logger = self.create_logger("train", split)
-
-        start_epoch = model.epoch
-
-        while model.epoch < max_epochs:
-            model.epoch += 1
-
-            pbar = self.create_pbar(dl)
-            pbar.set_description(f"Train: {model.epoch}/{max_epochs}")
-
-            for batch in pbar:
-                model.iteration += 1
-                scheduler.step(model.epoch, model.iteration)
-                batch = self.prepare_batch(batch)
-                self.step(batch, model, logger, optimizer)
-                for i, line in enumerate(logger.render(model.iteration)):
-                    pbar.set_line(i, line)
-
-            if model.epoch % save_every == 0:
-                self.saver.save(model, optimizer)
-            if validate_every and model.epoch % validate_every == 0:
-                val_logger = self.validate(model=model)
-                model.train()
-
-            pbar.close()
-
-    def prepare_test(self, action, split, epoch=None, model=None, label=None):
-        """
-        Args:
-            action: logger action
-            split: data split
-            epoch: epoch to load, only when model is None
-            model: loaded model
-        Returns:
-            model, pbar, logger
-        """
-        args = self.args
-
-        if model is None:
-            scheduler = self.create_scheduler()
-            model = self.create_model().to(args.device)
-            model = self.prepare_amp(model)
-            self.saver.load(model, epoch=epoch, strict=args.strict_loading)
-            scheduler.step(model.epoch, model.iteration)
-
-        model.eval()
-
-        dl = self.create_data_loader(split)
-        pbar = self.create_pbar(dl)
-
-        label = f"{label or ''}/{model.epoch}"
-        logger = self.create_logger(action, split, label)
-
-        return model, pbar, logger
-
-    @zouqi.command
     @torch.no_grad()
-    def validate(self, epoch: int = None, model: ignored = None):
+    def validate_loop(self):
         args = self.args
+        model = self.model.eval()
+        logger = self.logger
 
-        model, pbar, logger = self.prepare_test(
-            action="validate",
-            split=args.split or "validate",
-            epoch=epoch,
-            model=model,
-        )
-
+        pbar = self.create_pbar(self.data_loader)
         pbar.set_description(f"Validate @{model.epoch}")
         for index, batch in enumerate(pbar):
+            self.events.iteration_started(index)
             batch = self.prepare_batch(batch)
-            self.step(batch, model, logger)
+            self.step(batch)
             for i, line in enumerate(logger.render(index)):
                 pbar.set_line(i, line)
-
+            self.events.iteration_completed(index)
         mean = lambda l: sum(l) / len(l)
         for key in logger:
             if "loss" in key:
                 print(f"Average {key}: {logger.average(key):.4g}")
 
-        return logger
+    @zouqi.command
+    def validate(self, epoch: int = None, label: str = "default"):
+        self.update_args(self.validate.args)
+        self.initialize()
+        self.validate_loop()
 
     @staticmethod
     def try_rmtree(path):

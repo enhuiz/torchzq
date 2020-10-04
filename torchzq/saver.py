@@ -25,7 +25,7 @@ class Saver:
         self.last_epoch = self.get_last_epoch()
 
     @property
-    def empty(self):
+    def is_empty(self):
         return self.last_epoch == 0
 
     def get_last_epoch(self):

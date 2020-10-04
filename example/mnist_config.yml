@@ -4,4 +4,3 @@ runner: example/mnist_runner.py
 
 train:
   lr: "Lambda('lambda epoch: 0.001 * 0.95**epoch', epochwise=True)"
-  validate_every: 2

@@ -11,35 +11,33 @@ class LegacyRunner(BaseRunner):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def feed(self, model, x):
-        return model(x)
+    def feed(self, x):
+        return self.model(x)
 
     def criterion(self, x, y):
         raise NotImplementedError
 
-    def step(
-        self,
-        batch,
-        model,
-        logger,
-        optimizer=None,
-        scheduler=None,
-    ):
+    def step(self, batch):
         args = self.args
+
+        model = self.model
+        logger = self.logger
 
         x, y = batch
 
-        if optimizer is not None:
+        if self.training:
+            optimizer = self.optimizer
+
             optimizer.set_lr(self.args.lr())
 
-            x = self.feed(model, x)
+            x = self.feed(x)
             loss = self.criterion(x, y)
 
-            if model.amp is not None:
+            if self.model.amp is None:
+                (loss / args.update_every).backward()
+            else:
                 with model.amp.scale_loss(loss / args.update_every, optimizer) as loss:
                     loss.backward()
-            else:
-                (loss / args.update_every).backward()
 
             if (model.iteration + 1) % args.update_every == 0:
                 optimizer.step()
@@ -48,7 +46,7 @@ class LegacyRunner(BaseRunner):
             logger.add_scalar("lr", optimizer.get_lr())
         else:
             with torch.no_grad():
-                x = self.feed(model, x)
+                x = self.feed(x)
                 loss = self.criterion(x, y)
 
         logger.add_scalar("loss", loss.item())

@@ -87,22 +87,22 @@ class GANRunner(BaseRunner):
         except TypeError:
             return model(z)
 
-    def step(self, batch, model, logger, optimizer=None):
+    def step(self, batch):
         args = self.args
+
+        logger = self.logger
 
         real, label = batch
 
-        G, D = model
+        G, D = self.model
 
-        training = optimizer is not None
-
-        if training:
-            g_optimizer, d_optimizer = optimizer
+        if self.training:
+            g_optimizer, d_optimizer = self.optimizer
             g_optimizer.set_lr(args.g_lr())
             d_optimizer.set_lr(args.d_lr())
 
         # train d
-        if training:
+        if self.training:
             d_optimizer.zero_grad()
 
         z = self.sample(len(real))
@@ -123,13 +123,13 @@ class GANRunner(BaseRunner):
             logger.add_scalar(name, loss.item())
         logger.add_scalar("d_loss", d_loss.item())
 
-        if training:
+        if self.training:
             d_loss.backward()
             d_optimizer.step()
             logger.add_scalar("d_lr", d_optimizer.get_lr())
 
         # train g
-        if training:
+        if self.training:
             g_optimizer.zero_grad()
 
         z = self.sample(len(real))
@@ -138,7 +138,7 @@ class GANRunner(BaseRunner):
         g_loss = fake_output.mean()
         logger.add_scalar("g_loss", g_loss.item())
 
-        if training:
+        if self.training:
             g_loss.backward()
             g_optimizer.step()
             logger.add_scalar("g_lr", g_optimizer.get_lr())
