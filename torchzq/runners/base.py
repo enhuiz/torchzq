@@ -92,7 +92,7 @@ class BaseRunner(zouqi.Runner):
             self.args.lr = scheduler.schedule(self.args.lr)
         return scheduler
 
-    def create_logger(self, label=""):
+    def create_logger(self, label=None, epoch=None):
         """Create a logger to {log_dir / name / command / split / (label)},
         Args:
             label: a short name to differentiate different experiments
@@ -106,7 +106,8 @@ class BaseRunner(zouqi.Runner):
                 self.name,
                 self.command,
                 self.split,
-                label,
+                "" if label is None else str(label),
+                "" if epoch is None else str(epoch),
             ],
         )
         run_log_dir = Path(args.log_dir, *parts)
@@ -263,7 +264,7 @@ class BaseRunner(zouqi.Runner):
             self.logger = self.create_logger()
         else:
             self.data_loader = self.create_data_loader(shuffle=False)
-            self.logger = self.create_logger(f"{args.label or ''}/{self.model.epoch}")
+            self.logger = self.create_logger(args.label, self.model.epoch)
 
         # events
         if self.training:
