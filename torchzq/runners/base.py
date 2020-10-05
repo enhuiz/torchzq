@@ -106,7 +106,7 @@ class BaseRunner(zouqi.Runner):
                 self.name,
                 self.command,
                 self.split,
-                "" if label is None else str(label),
+                "default" if label is None else str(label),
                 "" if epoch is None else str(epoch),
             ],
         )
@@ -340,7 +340,7 @@ class BaseRunner(zouqi.Runner):
                 print(f"Average {key}: {logger.average(key):.4g}")
 
     @zouqi.command
-    def validate(self, epoch: int = None, label: str = "default"):
+    def validate(self, epoch: int = None, label: str = None):
         self.update_args(self.validate.args)
         self.initialize()
         self.validate_loop()
