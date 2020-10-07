@@ -315,7 +315,6 @@ class BaseRunner(zouqi.Runner):
         continue_: flag = False,
         epoch: int = None,
     ):
-        self.update_args(self.train.args)
         self.initialize()
         self.train_loop()
 
@@ -341,7 +340,6 @@ class BaseRunner(zouqi.Runner):
 
     @zouqi.command
     def validate(self, epoch: int = None, label: str = None):
-        self.update_args(self.validate.args)
         self.initialize()
         self.validate_loop()
 
