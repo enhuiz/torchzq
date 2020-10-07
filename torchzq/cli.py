@@ -63,7 +63,9 @@ class ConfigParser:
 
     @staticmethod
     def normalize_value(value):
-        if " " in str(value) or "(" in str(value):
+        if type(value) is list:
+            return " ".join(map(ConfigParser.normalize_value, value))
+        elif " " in str(value) or "(" in str(value):
             value = f'"{value}"'
         return value
 
