@@ -14,7 +14,7 @@ from pathlib import Path
 
 import zouqi
 
-from torchzq.parsing import union, lambda_, str2bool, ignored, flag, choices
+from torchzq.parsing import boolean, flag, choices
 from torchzq.saver import Saver
 from torchzq.logging import Logger
 from torchzq.utils import Timer
@@ -95,7 +95,7 @@ class BaseRunner(metaclass=MetaRunner):
         nj: int = min(os.cpu_count(), 12),
         device: str = "cuda",
         ckpt_dir: Path = "ckpt",
-        strict_loading: str2bool = True,
+        strict_loading: boolean = True,
         log_dir: Path = "logs",
         quiet: flag = False,
         split: str = None,

@@ -67,9 +67,9 @@ class ConfigParser:
             return " ".join(map(ConfigParser.normalize_value, value))
         elif " " in str(value) or "(" in str(value):
             value = f'"{value}"'
-        return value
+        return str(value)
 
-    def parse_cmd(self, command, manual_options=[]):
+    def parse_cmd(self, command, manual_arguments, manual_options):
         data = parse_yaml(self.path, command)
 
         if "default" in data:
@@ -91,12 +91,27 @@ class ConfigParser:
             except:
                 (k,) = kv
                 options.append(f"{self.normalize_key(k)}")
-        return f"{runner} {command} " + " ".join(options)
+        return f"{runner} {command} {' '.join(manual_arguments)} " + " ".join(options)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("yaml")
     parser.add_argument("command")
-    args, manual_options = parser.parse_known_args()
-    print(ConfigParser(args.yaml).parse_cmd(args.command, manual_options))
+    args, manual_inputs = parser.parse_known_args()
+
+    try:
+        manual_arguments, manual_options = " ".join(manual_inputs).split("--", 1)
+        manual_arguments = manual_arguments.split()
+        manual_options = ("--" + manual_options).split()
+    except:
+        manual_arguments = manual_inputs
+        manual_options = []
+
+    print(
+        ConfigParser(args.yaml).parse_cmd(
+            args.command,
+            manual_arguments,
+            manual_options,
+        )
+    )
