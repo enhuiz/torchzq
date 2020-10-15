@@ -14,15 +14,6 @@ from torchzq.runners.base import BaseRunner
 from torchzq.parsing import union, optional, lambda_
 from torchzq.scheduler import Scheduler
 
-try:
-    from contextlib import nullcontext
-except:
-    from contextlib import contextmanager
-
-    @contextmanager
-    def nullcontext(*args, **kwargs):
-        yield None
-
 
 class CombinedOptimizer(list):
     def __init__(self, optimizer):
@@ -47,6 +38,7 @@ class GANRunner(BaseRunner):
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        self.update_args(dict(gp_weight=gp_weight))
 
     def gp_loss(self, images, outputs):
         n = images.shape[0]
@@ -79,7 +71,7 @@ class GANRunner(BaseRunner):
     def create_scheduler(self):
         args = self.args
         scheduler = Scheduler()
-        if self.command == "train":
+        if self.training:
             args.g_lr = scheduler.schedule(args.g_lr)
             args.d_lr = scheduler.schedule(args.d_lr)
         return scheduler

@@ -132,21 +132,23 @@ class BaseRunner(metaclass=MetaRunner):
     def update_args(self, payload, ignored=[]):
         if type(ignored) is str:
             ignored = [ignored]
+        ignored += ["__class__"]
         for key in ignored:
-            del payload[key]
+            if key in payload:
+                del payload[key]
         self.args = getattr(self, "args", argparse.Namespace())
         self.args = argparse.Namespace(**{**vars(self.args), **payload})
 
     def autofeed(self, f, override={}, mapping={}):
         """Priority: 1. override, 2. parsed args 3. parameters' default"""
         assert hasattr(self, "args")
-        args = self.args
+        payload = vars(self.args)
 
         def m(key):
             return mapping[key] if key in mapping else key
 
         params = [p.name for p in inspect.signature(f).parameters.values()]
-        kwargs = {m(k): v for k, v in vars(args).items() if m(k) in params}
+        kwargs = {k: payload[m(k)] for k in params if m(k) in payload}
         kwargs.update(override)
 
         return f(**kwargs)
