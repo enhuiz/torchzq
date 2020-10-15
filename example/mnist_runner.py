@@ -3,13 +3,17 @@
 An MNIST example for TorchZQ.
 """
 
-import torchzq
-
 import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import datasets, transforms
+
+import sys
+
+sys.path.append(".")
+
+import torchzq
 
 
 class Net(nn.Module):
@@ -39,8 +43,10 @@ class Net(nn.Module):
 
 
 class Runner(torchzq.LegacyRunner):
-    def __init__(self):
-        super().__init__()
+    modes = ["test"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def create_model(self):
         return Net()
@@ -72,7 +78,7 @@ class Runner(torchzq.LegacyRunner):
 
     @torchzq.command
     def test(self, epoch=None, label: str = "default"):
-        self.update_args(self.test.args)
+        self.update_args(locals(), "self")
         self.initialize()
         pbar = self.create_pbar(self.data_loader)
         fake, real = [], []
@@ -94,4 +100,4 @@ class Runner(torchzq.LegacyRunner):
 
 
 if __name__ == "__main__":
-    Runner().run()
+    torchzq.start(Runner)

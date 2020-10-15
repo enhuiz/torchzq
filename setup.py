@@ -6,7 +6,7 @@ with open("README.md", "r") as f:
 setup(
     name="torchzq",
     python_requires=">=3.6.0",
-    version="1.0.3",
+    version="1.0.4",
     description="TorchZQ: A simple PyTorch experiment runner.",
     author="enhuiz",
     author_email="niuzhe.nz@outlook.com",
@@ -14,6 +14,13 @@ setup(
     long_description_content_type="text/markdown",
     packages=["torchzq", "torchzq/runners"],
     scripts=["zouqi", "zqboard"],
-    install_requires=["torch", "zouqi==1.0.4", "pyyaml"],
+    install_requires=[
+        "torch",
+        "zouqi==1.0.5",
+        "pyyaml",
+        "tqdm",
+        "pandas",
+        "torchvision",
+    ],
     url="https://github.com/enhuiz/torchzq",
 )

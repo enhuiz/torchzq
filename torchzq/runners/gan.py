@@ -40,9 +40,13 @@ class CombinedOptimizer(list):
 
 
 class GANRunner(BaseRunner):
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        *args,
+        gp_weight: float = 10,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
-        self.add_argument("--gp-weight", type=float, default=10)
 
     def gp_loss(self, images, outputs):
         n = images.shape[0]
@@ -143,7 +147,7 @@ class GANRunner(BaseRunner):
             g_optimizer.step()
             logger.add_scalar("g_lr", g_optimizer.get_lr())
 
-    @zouqi.command
+    @zouqi.command(inherit=True)
     def train(self, *args, g_lr=1e-3, d_lr=1e-3, lr=None, **kwargs):
         self.args.g_lr = g_lr
         self.args.d_lr = d_lr

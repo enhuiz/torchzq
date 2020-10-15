@@ -7,63 +7,107 @@ import inspect
 import numpy as np
 import torch
 import torch.nn as nn
+import functools
 from collections import defaultdict
 from torch.utils.data import DataLoader
 from pathlib import Path
 
 import zouqi
-from torchzq.parsing import union, lambda_, str2bool, ignored, flag
+
+from torchzq.parsing import union, lambda_, str2bool, ignored, flag, choices
 from torchzq.saver import Saver
 from torchzq.logging import Logger
 from torchzq.utils import Timer
 from torchzq.scheduler import Scheduler
+from torchzq.events import create_events
 
 
-class Events:
-    class Event(list):
-        def __call__(self, *args, **kwargs):
-            for f in self:
-                f(*args, **kwargs)
-
-    def __init__(self):
-        self._events = defaultdict(Events.Event)
-
-    @property
-    def epoch_started(self):
-        return self._events["epoch_started"]
-
-    @property
-    def epoch_completed(self):
-        return self._events["epoch_completed"]
-
-    @property
-    def iteration_started(self):
-        return self._events["iteration_started"]
-
-    @property
-    def iteration_completed(self):
-        return self._events["iteration_completed"]
+def parse_modes(cls):
+    modes = []
+    for base in cls.__bases__:
+        modes += parse_modes(base)
+    modes += vars(cls).get("modes", [])
+    return list(set(modes))
 
 
-class BaseRunner(zouqi.Runner):
+class MetaRunner(type):
+    """
+    Runner can be running in different modes, e.g. train, validate, test etc.
+    Different mode will leads to different function behavior.
+    This meta class automatically parse modes from the mode-determined function call.
+    The mode-determined function decides what would be the mode it runs on and locks
+    the mode variable until it returns.
+    """
+
+    def __new__(mcls, name, bases, attrs):
+        @property
+        def mode(self):
+            try:
+                return self._mode
+            except:
+                raise AttributeError(
+                    "Mode is not set, please call from a mode function to start."
+                )
+
+        attrs["mode"] = mode
+
+        cls = super().__new__(mcls, name, bases, attrs)
+
+        modes = parse_modes(cls)
+
+        for mode in modes:
+            try:
+                f = getattr(cls, mode)
+            except:
+                raise AttributeError(f'mode "{mode}" is not defined in your class.')
+
+            def wrap(f):
+                @functools.wraps(f)
+                def wrapped(self, *args, **kwargs):
+                    # change the current mode to the called function
+                    if not getattr(self, "_mode_locked", False):
+                        self._mode = f.__name__
+                        self._mode_locked = True
+                    ret = f(self, *args, **kwargs)
+                    self._mode_locked = False
+                    return ret
+
+                return wrapped
+
+            setattr(cls, mode, wrap(f))
+
+        return cls
+
+
+class BaseRunner(metaclass=MetaRunner):
+    # different modes that a command could be in
+    modes = ["train", "validate"]
+
     saver = None
     scheduler = None
     model = None
     optimizer = None
 
-    def __init__(self, **kwargs):
-        super().__init__(verbose=True, **kwargs)
-        self.add_argument("--name", type=str, default="Unnamed")
-        self.add_argument("--batch-size", type=int, default=32)
-        self.add_argument("--nj", type=int, default=min(os.cpu_count(), 12))
-        self.add_argument("--device", default="cuda")
-        self.add_argument("--ckpt-dir", type=Path, default="ckpt")
-        self.add_argument("--log-dir", type=Path, default="logs")
-        self.add_argument("--strict-loading", type=str2bool, default=True)
-        self.add_argument("--quiet", action="store_true")
-        self.add_argument("--amp-level", choices=["O0", "O1", "O2", "O3"])
-        self.add_argument("--split", type=str, default=None)
-        self.events = Events()
+    def __init__(
+        self,
+        name: str = "Unnamed",
+        batch_size: int = 32,
+        nj: int = min(os.cpu_count(), 12),
+        device: str = "cuda",
+        ckpt_dir: Path = "ckpt",
+        strict_loading: str2bool = True,
+        log_dir: Path = "logs",
+        quiet: flag = False,
+        split: str = None,
+        amp_level: choices(["O0", "O1", "O2", "O3"]) = None,
+    ):
+        self.update_args(locals(), "self")
+        self.events = create_events(
+            "epoch_started",
+            "epoch_completed",
+            "iteration_started",
+            "iteration_completed",
+        )
 
     @property
     def name(self):
@@ -71,12 +115,11 @@ class BaseRunner(zouqi.Runner):
 
     @property
     def training(self):
-        # do one thing at one time
-        return self.command == "train"
+        return self.mode == "train"
 
     @property
     def split(self):
-        return self.args.split or self.args.command
+        return self.args.split or self.mode
 
     @property
     def Dataset(self):
@@ -86,14 +129,36 @@ class BaseRunner(zouqi.Runner):
     def Optimizer(self):
         return torch.optim.Adam
 
+    def update_args(self, payload, ignored=[]):
+        if type(ignored) is str:
+            ignored = [ignored]
+        for key in ignored:
+            del payload[key]
+        self.args = getattr(self, "args", argparse.Namespace())
+        self.args = argparse.Namespace(**{**vars(self.args), **payload})
+
+    def autofeed(self, f, override={}, mapping={}):
+        """Priority: 1. override, 2. parsed args 3. parameters' default"""
+        assert hasattr(self, "args")
+        args = self.args
+
+        def m(key):
+            return mapping[key] if key in mapping else key
+
+        params = [p.name for p in inspect.signature(f).parameters.values()]
+        kwargs = {m(k): v for k, v in vars(args).items() if m(k) in params}
+        kwargs.update(override)
+
+        return f(**kwargs)
+
     def create_scheduler(self):
         scheduler = Scheduler()
-        if self.command == "train":
+        if self.mode == "train":
             self.args.lr = scheduler.schedule(self.args.lr)
         return scheduler
 
     def create_logger(self, label=None, epoch=None):
-        """Create a logger to {log_dir / name / command / split / (label)},
+        """Create a logger to {log_dir / name / mode / split / (label)},
         Args:
             label: a short name to differentiate different experiments
         Returns:
@@ -104,7 +169,7 @@ class BaseRunner(zouqi.Runner):
             lambda s: s.lstrip("/"),
             [
                 self.name,
-                self.command,
+                self.mode,
                 self.split,
                 "default" if label is None else str(label),
                 "" if epoch is None else str(epoch),
@@ -305,19 +370,6 @@ class BaseRunner(zouqi.Runner):
 
             self.events.epoch_completed(model.epoch)
 
-    @zouqi.command
-    def train(
-        self,
-        lr: str = "Constant(1e-3)",
-        weight_decay: float = 0,
-        max_epochs: int = 100,
-        save_every: int = 1,
-        continue_: flag = False,
-        epoch: int = None,
-    ):
-        self.initialize()
-        self.train_loop()
-
     @torch.no_grad()
     def validate_loop(self):
         args = self.args
@@ -338,16 +390,31 @@ class BaseRunner(zouqi.Runner):
             if "loss" in key:
                 print(f"Average {key}: {logger.average(key):.4g}")
 
-    @zouqi.command
-    def validate(self, epoch: int = None, label: str = None):
-        self.initialize()
-        self.validate_loop()
-
     @staticmethod
     def try_rmtree(path):
         if path.exists():
             shutil.rmtree(path)
             print(str(path), "removed.")
+
+    @zouqi.command
+    def train(
+        self,
+        lr: str = "1e-3",
+        weight_decay: float = 0,
+        max_epochs: int = 100,
+        save_every: int = 1,
+        continue_: flag = False,
+        epoch: int = None,
+    ):
+        self.update_args(locals(), "self")
+        self.initialize()
+        self.train_loop()
+
+    @zouqi.command
+    def validate(self, epoch: int = None, label: str = None):
+        self.update_args(locals(), "self")
+        self.initialize()
+        self.validate_loop()
 
     @zouqi.command
     def clear(self):

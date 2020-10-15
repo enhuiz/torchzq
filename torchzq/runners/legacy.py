@@ -8,8 +8,8 @@ from .base import BaseRunner
 
 
 class LegacyRunner(BaseRunner):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def feed(self, x):
         return self.model(x)
@@ -51,6 +51,7 @@ class LegacyRunner(BaseRunner):
 
         logger.add_scalar("loss", loss.item())
 
-    @zouqi.command
+    @zouqi.command(inherit=True)
     def train(self, *args, update_every: int = 1, **kwargs):
+        self.update_args(dict(update_every=update_every))
         super().train(*args, **kwargs)
