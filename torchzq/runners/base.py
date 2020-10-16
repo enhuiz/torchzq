@@ -159,8 +159,8 @@ class BaseRunner(metaclass=MetaRunner):
             self.args.lr = scheduler.schedule(self.args.lr)
         return scheduler
 
-    def create_logger(self, label=None, epoch=None):
-        """Create a logger to {log_dir / name / mode / split / (label)},
+    def create_logger(self, epoch=None, label=None):
+        """Create a logger to log_dir/name/mode/split/epoch/label,
         Args:
             label: a short name to differentiate different experiments
         Returns:
@@ -173,8 +173,8 @@ class BaseRunner(metaclass=MetaRunner):
                 self.name,
                 self.mode,
                 self.split,
-                "default" if label is None else str(label),
                 "" if epoch is None else str(epoch),
+                "default" if label is None else str(label),
             ],
         )
         run_log_dir = Path(args.log_dir, *parts)
@@ -331,7 +331,7 @@ class BaseRunner(metaclass=MetaRunner):
             self.logger = self.create_logger()
         else:
             self.data_loader = self.create_data_loader(shuffle=False)
-            self.logger = self.create_logger(args.label, self.model.epoch)
+            self.logger = self.create_logger(self.model.epoch, args.label)
 
         # events
         if self.training:
