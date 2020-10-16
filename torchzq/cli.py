@@ -1,5 +1,4 @@
 import argparse
-import sys
 import yaml
 
 
@@ -55,6 +54,9 @@ class ConfigParser:
                 parsed.append([s.lstrip("-")])
             else:
                 parsed[-1].append(s)
+        for i, s in enumerate(parsed):
+            if len(s) > 2:
+                parsed[i] = [s[0], s[1:]]
         return parsed
 
     @staticmethod
