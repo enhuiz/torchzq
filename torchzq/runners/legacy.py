@@ -17,13 +17,16 @@ class LegacyRunner(BaseRunner):
     def criterion(self, x, y):
         raise NotImplementedError
 
+    def prepare_batch(self, batch):
+        raise NotImplementedError
+
     def step(self, batch):
         args = self.args
 
         model = self.model
         logger = self.logger
 
-        x, y = batch
+        x, y = self.prepare_batch(batch)
 
         if self.training:
             optimizer = self.optimizer

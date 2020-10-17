@@ -55,7 +55,7 @@ class GANRunner(BaseRunner):
             # during validation, no_grad is set.
             return torch.zeros([])
 
-        grad = grad.view(n, -1)
+        grad = grad.reshape(n, -1)
 
         return self.args.gp_weight * ((grad.norm(2, dim=1) - 1) ** 2).mean()
 

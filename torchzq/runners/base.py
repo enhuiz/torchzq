@@ -342,9 +342,6 @@ class BaseRunner(metaclass=MetaRunner):
 
             self.events.epoch_completed.append(save)
 
-    def prepare_batch(self, batch):
-        raise NotImplementedError
-
     def step(self, batch):
         raise NotImplementedError
 
@@ -363,7 +360,6 @@ class BaseRunner(metaclass=MetaRunner):
                 model.iteration += 1
                 self.events.iteration_started(model.iteration)
                 self.scheduler.step(model.epoch, model.iteration)
-                batch = self.prepare_batch(batch)
                 self.step(batch)
                 for i, line in enumerate(logger.render(model.iteration)):
                     pbar.set_line(i, line)
@@ -382,7 +378,6 @@ class BaseRunner(metaclass=MetaRunner):
         pbar.set_description(f"Validate @{model.epoch}")
         for index, batch in enumerate(pbar):
             self.events.iteration_started(index)
-            batch = self.prepare_batch(batch)
             self.step(batch)
             for i, line in enumerate(logger.render(index)):
                 pbar.set_line(i, line)
