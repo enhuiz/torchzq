@@ -7,7 +7,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
 from collections import defaultdict
-from torchvision.utils import save_image
 
 import zouqi
 from torchzq.runners.base import BaseRunner
@@ -40,6 +39,11 @@ class GANRunner(BaseRunner):
         self.update_args(dict(gp_weight=gp_weight))
 
     def gp_loss(self, images, outputs):
+        args = self.args
+
+        if args.gp_weight <= 0:
+            return 0
+
         n = images.shape[0]
 
         try:
@@ -57,7 +61,7 @@ class GANRunner(BaseRunner):
 
         grad = grad.reshape(n, -1)
 
-        return self.args.gp_weight * ((grad.norm(2, dim=1) - 1) ** 2).mean()
+        return args.gp_weight * ((grad.norm(2, dim=1) - 1) ** 2).mean()
 
     def create_optimizer(self, model):
         return CombinedOptimizer(
@@ -87,7 +91,7 @@ class GANRunner(BaseRunner):
 
         logger = self.logger
 
-        real, label = batch
+        real, label = self.prepare_batch(batch)
 
         G, D = self.model
 
