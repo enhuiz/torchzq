@@ -147,7 +147,11 @@ class BaseRunner(metaclass=MetaRunner):
         def m(key):
             return mapping[key] if key in mapping else key
 
-        params = [p.name for p in inspect.signature(f).parameters.values()]
+        params = [
+            p.name
+            for p in inspect.signature(getattr(f, "__init__", f)).parameters.values()
+        ]
+
         kwargs = {k: payload[m(k)] for k in params if m(k) in payload}
         kwargs.update(override)
 
