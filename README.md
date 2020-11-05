@@ -4,10 +4,17 @@
 
 ## Installation
 
+Install from PyPI:
+
 ```
 pip install torchzq
 ```
 
+Install the latest version:
+
+```
+pip install git+https://github.com/enhuiz/torchzq@master
+```
 
 ## Run an Example
 
@@ -17,7 +24,6 @@ pip install torchzq
 $ zouqi example/config/mnist.yml train
 ```
 
-
 **Testing**
 
 ```
@@ -25,7 +31,6 @@ $ zouqi example/config/mnist.yml test
 ```
 
 ![](example/animation.gif)
-
 
 **TensorBoard**
 
@@ -42,4 +47,4 @@ $ zqboard --logdir .
 - [x] Configuration file inheritance
 - [x] TensorBoard
 - [x] (c)GAN training (WGAN-GP)
-- [x] Automatic mixed precision 
+- [x] Automatic mixed precision
