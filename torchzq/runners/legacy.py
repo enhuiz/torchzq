@@ -1,10 +1,22 @@
+import contextlib
 import argparse
 import numpy as np
 import torch
-import operator
 import zouqi
 
 from .base import BaseRunner
+
+
+@contextlib.contextmanager
+def autocast_if(cond):
+    try:
+        if cond:
+            with torch.cuda.amp.autocast():
+                yield
+        else:
+            yield
+    except:
+        pass
 
 
 class LegacyRunner(BaseRunner):
@@ -30,21 +42,25 @@ class LegacyRunner(BaseRunner):
 
         if self.training:
             optimizer = self.optimizer
-
             optimizer.set_lr(self.args.lr())
 
-            x = self.feed(x)
-            loss = self.criterion(x, y)
+            with autocast_if(args.use_fp16):
+                x = self.feed(x)
+                loss = self.criterion(x, y)
 
-            if self.model.amp is None:
-                (loss / args.update_every).backward()
+            if args.use_fp16:
+                self.scaler.scale(loss / args.update_every).backward()
             else:
-                with model.amp.scale_loss(loss / args.update_every, optimizer) as loss:
-                    loss.backward()
+                (loss / args.update_every).backward()
 
             if (model.iteration + 1) % args.update_every == 0:
-                optimizer.step()
-                optimizer.zero_grad()
+                if args.use_fp16:
+                    self.scaler.unscale_(optimizer)
+                    self.scaler.step(optimizer)
+                    self.scaler.update()
+                else:
+                    optimizer.step()
+                model.zero_grad()
 
             logger.add_scalar("lr", optimizer.get_lr())
         else:

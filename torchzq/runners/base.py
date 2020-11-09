@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import functools
+import contextlib
 from collections import defaultdict
 from torch.utils.data import DataLoader
 from pathlib import Path
@@ -30,6 +31,16 @@ def parse_modes(cls):
     return list(set(modes))
 
 
+@contextlib.contextmanager
+def locked(self, key, value):
+    occupied = hasattr(self, key)
+    if not occupied:
+        setattr(self, key, value)
+    yield
+    if not occupied:
+        delattr(self, key)
+
+
 class MetaRunner(type):
     """
     Runner can be running in different modes, e.g. train, validate, test etc.
@@ -41,36 +52,27 @@ class MetaRunner(type):
 
     def __new__(mcls, name, bases, attrs):
         @property
-        def mode(self):
+        def mode_prop(self):
             try:
                 return self._mode
             except:
-                raise AttributeError(
-                    "Mode is not set, please call from a mode function to start."
-                )
+                raise AttributeError("Mode is not set, call a mode function first.")
 
-        attrs["mode"] = mode
+        attrs["mode"] = mode_prop
 
         cls = super().__new__(mcls, name, bases, attrs)
 
-        modes = parse_modes(cls)
-
-        for mode in modes:
+        for mode in parse_modes(cls):
             try:
                 f = getattr(cls, mode)
             except:
-                raise AttributeError(f'mode "{mode}" is not defined in your class.')
+                raise AttributeError(f'Mode "{mode}" not defined in "{cls.__name__}".')
 
-            def wrap(f):
+            def wrap(f, mode=mode):
                 @functools.wraps(f)
                 def wrapped(self, *args, **kwargs):
-                    # change the current mode to the called function
-                    if not getattr(self, "_mode_locked", False):
-                        self._mode = f.__name__
-                        self._mode_locked = True
-                    ret = f(self, *args, **kwargs)
-                    self._mode_locked = False
-                    return ret
+                    with locked(self, "_mode", mode):
+                        return f(self, *args, **kwargs)
 
                 return wrapped
 
@@ -87,6 +89,7 @@ class BaseRunner(metaclass=MetaRunner):
     scheduler = None
     model = None
     optimizer = None
+    scaler = None
 
     def __init__(
         self,
@@ -99,7 +102,7 @@ class BaseRunner(metaclass=MetaRunner):
         log_dir: Path = "logs",
         quiet: flag = False,
         split: str = None,
-        amp_level: choices(["O0", "O1", "O2", "O3"]) = None,
+        use_fp16: boolean = False,
     ):
         self.update_args(locals(), "self")
         self.events = create_events(
@@ -147,10 +150,8 @@ class BaseRunner(metaclass=MetaRunner):
         def m(key):
             return mapping[key] if key in mapping else key
 
-        params = [
-            p.name
-            for p in inspect.signature(getattr(f, "__init__", f)).parameters.values()
-        ]
+        signature = inspect.signature(getattr(f, "__init__", f))
+        params = [p.name for p in signature.parameters.values()]
 
         kwargs = {k: payload[m(k)] for k in params if m(k) in payload}
         kwargs.update(override)
@@ -271,39 +272,18 @@ class BaseRunner(metaclass=MetaRunner):
 
         return optimizer
 
-    def initialize_amp(self):
-        if self.optimizer is None:
-            args = [self.model]
-        else:
-            args = [self.model, self.optimizer]
-
-        try:
-            from apex import amp
-        except:
-            amp = None
-
-        amp_level = self.args.amp_level
-        if amp_level is not None and amp is not None:
-            args = list(amp.initialize(*args, opt_level=amp_level))
-        else:
-            amp = None
-
-        args[0].amp = amp
-
-        self.model = args[0]
-
-        if len(args) > 1:
-            self.optimizer = args[1]
-
-    def initialize_saver(self):
+    def create_saver(self):
         args = self.args
         self.saver = Saver(args.ckpt_dir / self.name)
+
         if self.training and not self.saver.is_empty and not args.continue_:
             print("Some checkpoints exist and continue not set, skip training.")
             exit()
+
         self.saver.load(
             self.model,
             self.optimizer,
+            self.scaler,
             epoch=args.epoch,
             strict=args.strict_loading,
         )
@@ -317,17 +297,17 @@ class BaseRunner(metaclass=MetaRunner):
         # model
         self.model = self.create_model()
         self.model.to(args.device)
-        self.model.amp = None
+
+        # fp16
+        if args.use_fp16:
+            self.scaler = torch.cuda.amp.GradScaler()
 
         # optimizer
         if self.training:
             self.optimizer = self.create_optimizer(self.model)
 
-        # amp
-        self.initialize_amp()
-
         # saver
-        self.initialize_saver()
+        self.create_saver()
 
         # logger
         if self.training:
@@ -342,7 +322,7 @@ class BaseRunner(metaclass=MetaRunner):
 
             def save(epoch):
                 if epoch % args.save_every == 0:
-                    self.saver.save(self.model, self.optimizer)
+                    self.saver.save(self.model, self.optimizer, self.scaler)
 
             self.events.epoch_completed.append(save)
 

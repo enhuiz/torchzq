@@ -36,7 +36,7 @@ class Saver:
             last_epoch = 0
         return last_epoch
 
-    def load(self, model, optimizer=None, epoch=None, strict=True):
+    def load(self, model, optimizer=None, scaler=None, epoch=None, strict=True):
         epoch = self.last_epoch if epoch is None else epoch
         iteration = 0
 
@@ -61,16 +61,16 @@ class Saver:
                     # allow not loading the optimizer
                     print("Warning: loading optimizer failed.")
 
-            # without fp16, amp is None
-            if model.amp is not None:
-                model.amp.load_state_dict(state_dict["amp"])
+            # without fp16, scaler is None
+            if scaler is not None:
+                scaler.load_state_dict(state_dict["scaler"])
 
             print(f"{path} loaded.")
 
         model.epoch = epoch
         model.iteration = iteration
 
-    def save(self, model, optimizer=None):
+    def save(self, model, optimizer=None, scaler=None):
         self.root.mkdir(parents=True, exist_ok=True)
         path = self.root / f"{model.epoch}.pth"
         state_dict = dict(
@@ -78,7 +78,7 @@ class Saver:
             epoch=model.epoch,
             model=model.state_dict() if model else None,
             optimizer=optimizer.state_dict() if optimizer else None,
-            amp=model.amp.state_dict() if model.amp else None,
+            scaler=scaler.state_dict() if scaler else None,
         )
         torch.save(state_dict, path)
         print(f"{path} saved.")
