@@ -330,7 +330,7 @@ class BaseRunner(metaclass=MetaRunner):
         raise NotImplementedError
 
     def autocast_if_use_fp16(self):
-        return torch.cuda.amp.autocast(self.use_fp16)
+        return torch.cuda.amp.autocast(self.args.use_fp16)
 
     def train_loop(self):
         args = self.args
