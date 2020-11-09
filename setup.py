@@ -13,7 +13,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=["torchzq", "torchzq/runners"],
-    scripts=["zouqi", "zqboard"],
+    scripts=["zouqi"],
     install_requires=[
         "torch",
         "zouqi==1.0.5",
