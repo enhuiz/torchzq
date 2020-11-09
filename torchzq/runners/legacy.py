@@ -5,18 +5,7 @@ import torch
 import zouqi
 
 from .base import BaseRunner
-
-
-@contextlib.contextmanager
-def autocast_if(cond):
-    try:
-        if cond:
-            with torch.cuda.amp.autocast():
-                yield
-        else:
-            yield
-    except:
-        pass
+from .utils import autocast_if
 
 
 class LegacyRunner(BaseRunner):
@@ -40,13 +29,13 @@ class LegacyRunner(BaseRunner):
 
         x, y = self.prepare_batch(batch)
 
+        with autocast_if(args.use_fp16):
+            x = self.feed(x)
+            loss = self.criterion(x, y)
+
         if self.training:
             optimizer = self.optimizer
             optimizer.set_lr(self.args.lr())
-
-            with autocast_if(args.use_fp16):
-                x = self.feed(x)
-                loss = self.criterion(x, y)
 
             if args.use_fp16:
                 self.scaler.scale(loss / args.update_every).backward()
@@ -60,13 +49,9 @@ class LegacyRunner(BaseRunner):
                     self.scaler.update()
                 else:
                     optimizer.step()
-                model.zero_grad()
+                optimizer.zero_grad()
 
             logger.add_scalar("lr", optimizer.get_lr())
-        else:
-            with torch.no_grad():
-                x = self.feed(x)
-                loss = self.criterion(x, y)
 
         logger.add_scalar("loss", loss.item())
 

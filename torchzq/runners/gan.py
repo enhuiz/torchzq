@@ -12,6 +12,8 @@ import zouqi
 from torchzq.runners.base import BaseRunner
 from torchzq.scheduler import Scheduler
 
+from .utils import autocast_if
+
 
 class CombinedOptimizer(list):
     def __init__(self, optimizer):
@@ -105,26 +107,40 @@ class GANRunner(BaseRunner):
             d_optimizer.zero_grad()
 
         z = self.sample(len(real))
-        fake = self.feed(G, z, label)
-        real.requires_grad_()
-        fake_output = self.feed(D, fake, label)
-        real_output = self.feed(D, real, label)
 
-        losses = {
-            "d_fake_loss": F.relu(1 - fake_output).mean(),
-            "d_real_loss": F.relu(1 + real_output).mean(),
-            "d_gp_loss": self.gp_loss(real, real_output),
-        }
+        with autocast_if(args.use_fp16):
+            fake = self.feed(G, z, label)
+            real.requires_grad_()
+            fake_output = self.feed(D, fake, label)
+            real_output = self.feed(D, real, label)
 
-        d_loss = 0
-        for name, loss in losses.items():
-            d_loss += loss
-            logger.add_scalar(name, loss.item())
-        logger.add_scalar("d_loss", d_loss.item())
+            losses = {
+                "d_fake_loss": F.relu(1 - fake_output).mean(),
+                "d_real_loss": F.relu(1 + real_output).mean(),
+                "d_gp_loss": self.gp_loss(real, real_output),
+            }
+
+            d_loss = 0
+            for name, loss in losses.items():
+                d_loss += loss
+                logger.add_scalar(name, loss.item())
+            logger.add_scalar("d_loss", d_loss.item())
 
         if self.training:
-            d_loss.backward()
-            d_optimizer.step()
+            if args.use_fp16:
+                self.scaler.scale(d_loss).backward()
+                self.scaler.unscale_(d_optimizer)
+            else:
+                d_loss.backward()
+
+            # grad clip here (TODO)
+
+            if args.use_fp16:
+                self.scaler.step(d_optimizer)
+                self.scaler.update()
+            else:
+                d_optimizer.step()
+
             logger.add_scalar("d_lr", d_optimizer.get_lr())
 
         # train g
@@ -132,14 +148,27 @@ class GANRunner(BaseRunner):
             g_optimizer.zero_grad()
 
         z = self.sample(len(real))
-        fake = self.feed(G, z, label)
-        fake_output = self.feed(D, fake, label)
-        g_loss = fake_output.mean()
-        logger.add_scalar("g_loss", g_loss.item())
+        with autocast_if(args.use_fp16):
+            fake = self.feed(G, z, label)
+            fake_output = self.feed(D, fake, label)
+            g_loss = fake_output.mean()
+            logger.add_scalar("g_loss", g_loss.item())
 
         if self.training:
-            g_loss.backward()
-            g_optimizer.step()
+            if args.use_fp16:
+                self.scaler.scale(g_loss).backward()
+                self.scaler.unscale_(g_optimizer)
+            else:
+                g_loss.backward()
+
+            # grad clip here (TODO)
+
+            if args.use_fp16:
+                self.scaler.step(g_optimizer)
+                self.scaler.update()
+            else:
+                g_optimizer.step()
+
             logger.add_scalar("g_lr", g_optimizer.get_lr())
 
     @zouqi.command(inherit=True)

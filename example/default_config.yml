@@ -3,3 +3,4 @@ name: default
 train:
   max_epoch: 10
   batch_size: 512
+  update_every: 2
