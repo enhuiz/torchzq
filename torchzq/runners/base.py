@@ -329,6 +329,9 @@ class BaseRunner(metaclass=MetaRunner):
     def step(self, batch):
         raise NotImplementedError
 
+    def autocast_if_use_fp16(self):
+        return torch.cuda.amp.autocast(self.use_fp16)
+
     def train_loop(self):
         args = self.args
         model = self.model

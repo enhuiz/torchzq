@@ -5,7 +5,6 @@ import torch
 import zouqi
 
 from .base import BaseRunner
-from .utils import autocast_if
 
 
 class LegacyRunner(BaseRunner):
@@ -29,7 +28,7 @@ class LegacyRunner(BaseRunner):
 
         x, y = self.prepare_batch(batch)
 
-        with autocast_if(args.use_fp16):
+        with self.autocast_if_use_fp16():
             x = self.feed(x)
             loss = self.criterion(x, y)
 

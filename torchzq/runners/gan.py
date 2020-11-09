@@ -12,8 +12,6 @@ import zouqi
 from torchzq.runners.base import BaseRunner
 from torchzq.scheduler import Scheduler
 
-from .utils import autocast_if
-
 
 class CombinedOptimizer(list):
     def __init__(self, optimizer):
@@ -108,7 +106,7 @@ class GANRunner(BaseRunner):
 
         z = self.sample(len(real))
 
-        with autocast_if(args.use_fp16):
+        with self.autocast_if_use_fp16():
             fake = self.feed(G, z, label)
             real.requires_grad_()
             fake_output = self.feed(D, fake, label)
@@ -148,7 +146,7 @@ class GANRunner(BaseRunner):
             g_optimizer.zero_grad()
 
         z = self.sample(len(real))
-        with autocast_if(args.use_fp16):
+        with self.autocast_if_use_fp16():
             fake = self.feed(G, z, label)
             fake_output = self.feed(D, fake, label)
             g_loss = fake_output.mean()
