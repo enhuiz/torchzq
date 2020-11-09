@@ -35,7 +35,7 @@ $ zouqi example/config/mnist.yml test
 **TensorBoard**
 
 ```
-$ zqboard --logdir .
+$ tensorboard --logdir logs
 ```
 
 ## Supported Features
