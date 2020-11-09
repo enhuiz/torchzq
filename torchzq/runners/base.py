@@ -9,9 +9,10 @@ import torch
 import torch.nn as nn
 import functools
 import contextlib
+from pathlib import Path
 from collections import defaultdict
 from torch.utils.data import DataLoader
-from pathlib import Path
+from functools import partial
 
 import zouqi
 
@@ -329,8 +330,9 @@ class BaseRunner(metaclass=MetaRunner):
     def step(self, batch):
         raise NotImplementedError
 
+    @property
     def autocast_if_use_fp16(self):
-        return torch.cuda.amp.autocast(self.args.use_fp16)
+        return partial(torch.cuda.amp.autocast, enabled=self.args.use_fp16)
 
     def train_loop(self):
         args = self.args
