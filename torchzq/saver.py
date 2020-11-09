@@ -58,12 +58,15 @@ class Saver:
                     optimizer.load_state_dict(state_dict["optimizer"])
                 except Exception as e:
                     print(e)
-                    # allow not loading the optimizer
-                    print("Warning: loading optimizer failed.")
+                    print("Warning: loading optimizer state dict failed.")
 
             # without fp16, scaler is None
             if scaler is not None:
-                scaler.load_state_dict(state_dict["scaler"])
+                try:
+                    scaler.load_state_dict(state_dict["scaler"])
+                except Exception as e:
+                    print(e)
+                    print("Warning: loading scaler state dict failed.")
 
             print(f"{path} loaded.")
 
