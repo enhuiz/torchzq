@@ -1,5 +1,7 @@
-import argparse
+import re
 import yaml
+import argparse
+from pathlib import Path
 
 
 def load_yaml(path, command):
@@ -45,7 +47,7 @@ def parse_yaml(path, command):
 
 class ConfigParser:
     def __init__(self, path):
-        self.path = path
+        self.path = Path(path)
 
     def parse_manual_options(self, manual_options):
         parsed = []
@@ -60,16 +62,29 @@ class ConfigParser:
         return parsed
 
     @staticmethod
-    def normalize_key(key):
+    def parse_key(key):
         return "--" + key.replace("_", "-").lstrip("-")
 
     @staticmethod
-    def normalize_value(value):
+    def parse_value(value):
         if type(value) is list:
-            return " ".join(map(ConfigParser.normalize_value, value))
+            return " ".join(map(ConfigParser.parse_value, value))
         elif " " in str(value) or "(" in str(value):
             value = f'"{value}"'
         return str(value)
+
+    def parse_option(self, k, v=None):
+        if k == "name":
+            groups = re.findall("\$from\((.+?)\)", v)
+            if groups:
+                path = Path(groups[0])
+                if path not in self.path.parents:
+                    raise ValueError(
+                        "Name root should be the parent of the configuration file!"
+                    )
+                rpath = self.path.relative_to(path)
+                v = rpath.with_suffix("")
+        return f"{self.parse_key(k)} {'' if v is None else self.parse_value(v)}"
 
     def parse_cmd(self, command, manual_arguments, manual_options):
         data = parse_yaml(self.path, command)
@@ -87,12 +102,7 @@ class ConfigParser:
 
         options = []
         for kv in list(data.items()) + self.parse_manual_options(manual_options):
-            try:
-                k, v = kv
-                options.append(f"{self.normalize_key(k)} {self.normalize_value(v)}")
-            except:
-                (k,) = kv
-                options.append(f"{self.normalize_key(k)}")
+            options.append(self.parse_option(*kv))
         return f"{runner} {command} {' '.join(manual_arguments)} " + " ".join(options)
 
 
