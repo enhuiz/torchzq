@@ -42,10 +42,12 @@ class LegacyRunner(BaseRunner):
                 if args.use_fp16:
                     self.scaler.unscale_(optimizer)
 
-                grad_norm = nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    args.grad_clip_threshold,
-                )
+                if args.grad_clip_thres is not None:
+                    grad_norm = nn.utils.clip_grad_norm_(
+                        model.parameters(),
+                        args.grad_clip_thres,
+                    )
+                    logger.add_scalar("grad_norm", grad_norm)
 
                 if args.use_fp16:
                     self.scaler.step(optimizer)
@@ -53,8 +55,6 @@ class LegacyRunner(BaseRunner):
                 else:
                     optimizer.step()
                 optimizer.zero_grad()
-
-                logger.add_scalar("grad_norm", grad_norm)
 
             logger.add_scalar("lr", optimizer.get_lr())
 
@@ -64,7 +64,7 @@ class LegacyRunner(BaseRunner):
     def train(
         self,
         update_every: int = 1,
-        grad_clip_threshold: float = 1,
+        grad_clip_thres: float = None,
         **kwargs,
     ):
         self.update_args(locals(), ["args", "kwargs", "self"])
