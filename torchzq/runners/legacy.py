@@ -1,7 +1,4 @@
-import contextlib
-import argparse
-import numpy as np
-import torch
+import torch.nn as nn
 import zouqi
 
 from .base import BaseRunner
@@ -44,17 +41,31 @@ class LegacyRunner(BaseRunner):
             if (model.iteration + 1) % args.update_every == 0:
                 if args.use_fp16:
                     self.scaler.unscale_(optimizer)
+
+                grad_norm = nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    args.grad_clip_threshold,
+                )
+
+                if args.use_fp16:
                     self.scaler.step(optimizer)
                     self.scaler.update()
                 else:
                     optimizer.step()
                 optimizer.zero_grad()
 
+                logger.add_scalar("grad_norm", grad_norm)
+
             logger.add_scalar("lr", optimizer.get_lr())
 
         logger.add_scalar("loss", loss.item())
 
-    @zouqi.command(inherit=True)
-    def train(self, *args, update_every: int = 1, **kwargs):
-        self.update_args(dict(update_every=update_every))
-        super().train(*args, **kwargs)
+    @zouqi.command
+    def train(
+        self,
+        update_every: int = 1,
+        grad_clip_threshold: float = 1,
+        **kwargs,
+    ):
+        self.update_args(locals(), ["args", "kwargs", "self"])
+        super().train(**kwargs)
