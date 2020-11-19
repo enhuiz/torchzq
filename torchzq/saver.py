@@ -2,26 +2,25 @@ import torch
 from pathlib import Path
 
 
-def load_state_dict(module, state_dict, strict):
+def load_state_dict(model, state_dict, strict):
     if strict:
-        module.load_state_dict(state_dict, strict=True)
+        model.load_state_dict(state_dict, strict=True)
     else:
         provided = set(state_dict)
-        required = set(module.state_dict())
+        required = set(model.state_dict())
         agreed = provided & required
         state_dict = {k: state_dict[k] for k in agreed}
         print("Provided but not required keys: ")
         print(provided - required)
         print("Required but not provided keys: ")
         print(required - provided)
-        module.load_state_dict(state_dict, strict=False)
-    return module
+        model.load_state_dict(state_dict, strict=False)
+    return model
 
 
 class Saver:
     def __init__(self, root):
         self.root = root
-        self.cache = {}
         self.last_epoch = self.get_last_epoch()
 
     @property
@@ -43,10 +42,7 @@ class Saver:
         if epoch > 0:
             path = self.root / f"{epoch}.pth"
 
-            if path not in self.cache:
-                self.cache[path] = torch.load(path)
-
-            state_dict = self.cache[path]
+            state_dict = torch.load(path, "cpu")
 
             load_state_dict(model, state_dict["model"], strict)
 

@@ -8,10 +8,7 @@ class LegacyRunner(BaseRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def feed(self, x):
-        return self.model(x)
-
-    def criterion(self, x, y):
+    def compute_loss(self, x, y):
         raise NotImplementedError
 
     def prepare_batch(self, batch):
@@ -21,13 +18,12 @@ class LegacyRunner(BaseRunner):
         args = self.args
 
         model = self.model
-        logger = self.logger
+        stats = {}
 
         x, y = self.prepare_batch(batch)
 
         with self.autocast_if_use_fp16():
-            x = self.feed(x)
-            loss = self.criterion(x, y)
+            loss = self.compute_loss(x, y)
 
         if self.training:
             optimizer = self.optimizer
@@ -47,7 +43,7 @@ class LegacyRunner(BaseRunner):
                         model.parameters(),
                         args.grad_clip_thres,
                     )
-                    logger.add_scalar("grad_norm", grad_norm)
+                    stats["grad_norm"] = grad_norm.item()
 
                 if args.use_fp16:
                     self.scaler.step(optimizer)
@@ -56,9 +52,11 @@ class LegacyRunner(BaseRunner):
                     optimizer.step()
                 optimizer.zero_grad()
 
-            logger.add_scalar("lr", optimizer.get_lr())
+            stats["lr"] = optimizer.get_lr()
 
-        logger.add_scalar("loss", loss.item())
+        stats["loss"] = loss.item()
+
+        return stats
 
     @zouqi.command
     def train(

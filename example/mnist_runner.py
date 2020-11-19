@@ -54,7 +54,7 @@ class Runner(torchzq.LegacyRunner):
     def create_dataset(self):
         return datasets.MNIST(
             "../data",
-            train=self.split == "train",
+            train=self.training,
             download=True,
             transform=transforms.Compose(
                 [
@@ -73,13 +73,13 @@ class Runner(torchzq.LegacyRunner):
     def predict(self, x):
         return x.argmax(dim=-1)
 
-    def criterion(self, x, y):
-        return F.nll_loss(x, y)
+    def compute_loss(self, x, y):
+        return F.nll_loss(self.model(x), y)
 
     @torchzq.command
-    def test(self, epoch=None, label: str = "default"):
+    def test(self, epoch=None):
         self.update_args(locals(), "self")
-        self.initialize()
+        self.init_state()
         pbar = self.create_pbar(self.data_loader)
         fake, real = [], []
         for batch in pbar:

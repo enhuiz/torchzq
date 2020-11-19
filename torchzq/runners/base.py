@@ -9,19 +9,22 @@ import torch
 import torch.nn as nn
 import functools
 import contextlib
+import numbers
 from pathlib import Path
 from collections import defaultdict
 from torch.utils.data import DataLoader
 from functools import partial
+from collections import defaultdict
+
+from torch.utils.tensorboard import SummaryWriter
 
 import zouqi
 
 from torchzq.parsing import boolean, flag, choices
 from torchzq.saver import Saver
-from torchzq.logging import Logger
-from torchzq.utils import Timer
 from torchzq.scheduler import Scheduler
 from torchzq.events import create_events
+from torchzq.pbar import create_pbar
 
 
 def parse_modes(cls):
@@ -33,32 +36,14 @@ def parse_modes(cls):
 
 
 @contextlib.contextmanager
-def defined(self, key, value):
-    """Define the variable {key} with {value}, if it is already defined, do nothing."""
-    occupied = hasattr(self, key)
-    if not occupied:
-        setattr(self, key, value)
+def working_mode(self, new):
+    old = getattr(self, "_mode", None)
+    setattr(self, "_mode", new)
     yield
-    if not occupied:
-        delattr(self, key)
-
-
-@property
-def mode(self):
-    try:
-        return self._mode
-    except:
-        raise AttributeError("Mode is not set, call a mode function first.")
-
-
-@contextlib.contextmanager
-def redefined_mode(self, mode):
-    if mode not in self.modes:
-        raise ValueError(f"{mode} is not a registered mode.")
-    old_mode = self.mode
-    self._mode = mode
-    yield
-    self._mode = old_mode
+    if old is None:
+        delattr(self, "_mode")
+    else:
+        setattr(self, "_mode", old)
 
 
 class MetaRunner(type):
@@ -66,13 +51,18 @@ class MetaRunner(type):
     Runner can be running in different modes, e.g. train, validate, test etc.
     Different mode will leads to different function behavior.
     This meta class automatically parse modes from the mode-determined function call.
-    The mode-determined function decides what would be the mode it runs on. One may
-    temporaly change the mode using with self.redefined_mode('').
+    The mode-determined function decides what would be the mode it runs on.
     """
 
     def __new__(mcls, name, bases, attrs):
+        @property
+        def mode(self):
+            try:
+                return self._mode
+            except:
+                raise AttributeError("Mode is not set, call a mode function first.")
+
         attrs["mode"] = mode
-        attrs["redefined_mode"] = redefined_mode
 
         cls = super().__new__(mcls, name, bases, attrs)
 
@@ -85,7 +75,7 @@ class MetaRunner(type):
             def wrap(f, name=name):
                 @functools.wraps(f)
                 def wrapped(self, *args, **kwargs):
-                    with defined(self, "_mode", name):
+                    with working_mode(self, name):
                         return f(self, *args, **kwargs)
 
                 return wrapped
@@ -96,14 +86,16 @@ class MetaRunner(type):
 
 
 class BaseRunner(metaclass=MetaRunner):
-    # different modes that a command could be in
     modes = ["train", "validate"]
 
-    saver = None
-    scheduler = None
+    # global states
     model = None
     optimizer = None
     scaler = None
+    saver = None
+
+    # mode states
+    states = argparse.Namespace()
 
     def __init__(
         self,
@@ -111,20 +103,33 @@ class BaseRunner(metaclass=MetaRunner):
         batch_size: int = 32,
         nj: int = min(os.cpu_count(), 12),
         device: str = "cuda",
-        ckpt_dir: Path = "ckpt",
         strict_loading: boolean = True,
-        log_dir: Path = "logs",
+        ckpt_root: Path = "ckpt",
+        logs_root: Path = "logs",
         quiet: flag = False,
-        split: str = None,
         use_fp16: boolean = False,
     ):
         self.update_args(locals(), "self")
-        self.events = create_events(
-            "epoch_started",
-            "epoch_completed",
-            "iteration_started",
-            "iteration_completed",
-        )
+
+    @property
+    def state(self):
+        return getattr(self.states, self.mode)
+
+    @property
+    def data_loader(self):
+        return self.state.data_loader
+
+    @property
+    def dataset(self):
+        return self.data_loader.dataset
+
+    @property
+    def scheduler(self):
+        return self.state.scheduler
+
+    @property
+    def logger(self):
+        return self.state.logger
 
     @property
     def name(self):
@@ -135,8 +140,20 @@ class BaseRunner(metaclass=MetaRunner):
         return self.mode == "train"
 
     @property
-    def split(self):
-        return self.args.split or self.mode
+    def logs_dir(self):
+        return self.args.logs_root / self.name / self.mode
+
+    @property
+    def ckpt_dir(self):
+        return self.args.ckpt_root / self.name
+
+    @property
+    def events(self):
+        return self.state.events
+
+    @property
+    def autocast_if_use_fp16(self):
+        return partial(torch.cuda.amp.autocast, enabled=self.args.use_fp16)
 
     @property
     def Dataset(self):
@@ -178,68 +195,8 @@ class BaseRunner(metaclass=MetaRunner):
             self.args.lr = scheduler.schedule(self.args.lr)
         return scheduler
 
-    def create_logger(self, epoch=None, label=None):
-        """Create a logger to log_dir/name/mode/split/epoch/label,
-        Args:
-            label: a short name to differentiate different experiments
-        Returns:
-            logger
-        """
-        args = self.args
-        parts = map(
-            lambda s: s.lstrip("/"),
-            [
-                self.name,
-                self.mode,
-                self.split,
-                "" if epoch is None else str(epoch),
-                "default" if label is None else str(label),
-            ],
-        )
-        run_log_dir = Path(args.log_dir, *parts)
-        loss_smoothing = [r"(\S+_)?loss(\S+_)?"]
-        postfix = run_log_dir.relative_to(Path(args.log_dir, self.name))
-        logger = Logger(run_log_dir, loss_smoothing, postfix=postfix)
-        return logger
-
-    def create_pbar(self, iterable):
-        pbar = tqdm.tqdm(iterable, dynamic_ncols=True, disable=self.args.quiet)
-
-        close = pbar.close
-
-        create_line = lambda: tqdm.tqdm(bar_format="╰{postfix}")
-
-        if self.args.quiet:
-            items = {}
-            line = create_line()
-
-            timer = Timer(10)
-
-            def set_line(i, s):
-                items[i] = s
-                if timer.timeup():
-                    line.set_postfix_str(", ".join(items.values()) + "\n")
-                    timer.restart()
-
-            def close_all():
-                close()
-                line.close()
-
-        else:
-            lines = defaultdict(create_line)
-
-            def set_line(i, s):
-                lines[i].set_postfix_str(s)
-
-            def close_all():
-                close()
-                for line in lines.values():
-                    line.close()
-
-        pbar.set_line = set_line
-        pbar.close = close_all
-
-        return pbar
+    def create_logger(self):
+        return SummaryWriter(self.logs_dir)
 
     def create_dataset(self):
         raise NotImplementedError
@@ -286,27 +243,11 @@ class BaseRunner(metaclass=MetaRunner):
 
         return optimizer
 
-    def create_saver(self):
-        args = self.args
-        self.saver = Saver(args.ckpt_dir / self.name)
-
-        if self.training and not self.saver.is_empty and not args.continue_:
-            print("Some checkpoints exist and continue not set, skip training.")
-            exit()
-
-        self.saver.load(
-            self.model,
-            self.optimizer,
-            self.scaler,
-            epoch=args.epoch,
-            strict=args.strict_loading,
-        )
-
-    def initialize(self):
+    def init_global_state(self):
         args = self.args
 
-        # scheduler
-        self.scheduler = self.create_scheduler()
+        if self.model is not None:
+            return
 
         # model
         self.model = self.create_model()
@@ -321,79 +262,77 @@ class BaseRunner(metaclass=MetaRunner):
             self.optimizer = self.create_optimizer(self.model)
 
         # saver
-        self.create_saver()
+        self.saver = Saver(self.ckpt_dir)
 
-        # logger
+        if self.training and not self.saver.is_empty and not args.continue_:
+            raise RuntimeError("Some checkpoints exist and continue not set.")
+
+        self.saver.load(
+            self.model,
+            self.optimizer,
+            self.scaler,
+            epoch=args.epoch,
+            strict=args.strict_loading,
+        )
+
+    def create_events(self):
+        args = self.args
+
+        names = [
+            "iteration_started",
+            "iteration_completed",
+        ]
+
         if self.training:
-            self.data_loader = self.create_data_loader(shuffle=True)
-            self.logger = self.create_logger()
-        else:
-            self.data_loader = self.create_data_loader(shuffle=False)
-            self.logger = self.create_logger(self.model.epoch, args.label)
+            names += [
+                "epoch_started",
+                "epoch_completed",
+            ]
 
-        # events
+        events = create_events(*names)
+
         if self.training:
 
             def save(epoch):
                 if epoch % args.save_every == 0:
                     self.saver.save(self.model, self.optimizer, self.scaler)
 
-            self.events.epoch_completed.append(save)
+            def validate(epoch):
+                if epoch % args.validate_every == 0:
+                    self.validate()
+                    self.model.train()
+
+            events.epoch_completed.append(save)
+            events.epoch_completed.append(validate)
+
+        return events
+
+    def init_mode_state(self):
+        args = self.args
+
+        if hasattr(self.states, self.mode):
+            return
+
+        state = argparse.Namespace()
+
+        # scheduler
+        state.scheduler = self.create_scheduler()
+
+        # logger
+        state.logger = self.create_logger()
+
+        state.data_loader = self.create_data_loader(shuffle=self.training)
+
+        state.events = self.create_events()
+
+        setattr(self.states, self.mode, state)
+
+    def init_state(self):
+        self.init_global_state()
+        self.init_mode_state()
 
     def step(self, batch):
         raise NotImplementedError
-
-    @property
-    def autocast_if_use_fp16(self):
-        return partial(torch.cuda.amp.autocast, enabled=self.args.use_fp16)
-
-    def train_loop(self):
-        args = self.args
-        model = self.model
-        logger = self.logger
-
-        while model.epoch < args.max_epochs:
-            model.epoch += 1
-            self.events.epoch_started(model.epoch)
-
-            pbar = self.create_pbar(self.data_loader)
-            pbar.set_description(f"Train: {model.epoch}/{args.max_epochs}")
-            for batch in pbar:
-                model.iteration += 1
-                self.events.iteration_started(model.iteration)
-                self.scheduler.step(model.epoch, model.iteration)
-                self.step(batch)
-                for i, line in enumerate(logger.render(model.iteration)):
-                    pbar.set_line(i, line)
-                self.events.iteration_completed(model.iteration)
-            pbar.close()
-
-            self.events.epoch_completed(model.epoch)
-
-    @torch.no_grad()
-    def validate_loop(self):
-        args = self.args
-        model = self.model.eval()
-        logger = self.logger
-
-        pbar = self.create_pbar(self.data_loader)
-        pbar.set_description(f"Validate @{model.epoch}")
-        for index, batch in enumerate(pbar):
-            self.events.iteration_started(index)
-            self.step(batch)
-            for i, line in enumerate(logger.render(index)):
-                pbar.set_line(i, line)
-            self.events.iteration_completed(index)
-        mean = lambda l: sum(l) / len(l)
-        for key in logger:
-            if "loss" in key:
-                print(f"Average {key}: {logger.average(key):.4g}")
-
-    @staticmethod
-    def try_rmtree(path):
-        if path.exists():
-            shutil.rmtree(path)
-            print(str(path), "removed.")
 
     @zouqi.command
     def train(
@@ -402,23 +341,78 @@ class BaseRunner(metaclass=MetaRunner):
         weight_decay: float = 0,
         max_epochs: int = 100,
         save_every: int = 1,
+        validate_every: int = 1,
         continue_: flag = False,
         epoch: int = None,
     ):
         self.update_args(locals(), "self")
-        self.initialize()
-        self.train_loop()
+        self.init_state()
+
+        args = self.args
+        model = self.model
+        logger = self.logger
+
+        while model.epoch < args.max_epochs:
+            model.epoch += 1
+            self.events.epoch_started(model.epoch)
+            pbar = create_pbar(self.data_loader, args.quiet)
+            pbar.set_description(f"Train: {model.epoch}/{args.max_epochs}")
+            for batch in pbar:
+                model.iteration += 1
+                self.events.iteration_started(model.iteration)
+                self.scheduler.step(model.epoch, model.iteration)
+                stats = self.step(batch)
+                pbar.update_line(0, f"iteration: {model.iteration}")
+                for l, (key, val) in enumerate(stats.items(), 1):
+                    pbar.update_line(l, f"{key}: {val:.4f}")
+                    logger.add_scalar(key, val, model.iteration)
+                self.logger.flush()
+                self.events.iteration_completed(model.iteration)
+            pbar.close()
+            self.events.epoch_completed(model.epoch)
 
     @zouqi.command
-    def validate(self, epoch: int = None, label: str = None):
+    def validate(
+        self,
+        epoch: int = None,
+    ):
         self.update_args(locals(), "self")
-        self.initialize()
-        self.validate_loop()
+        self.init_state()
+
+        args = self.args
+        model = self.model.eval()
+        logger = self.logger
+
+        pbar = create_pbar(self.data_loader, args.quiet)
+        pbar.set_description(f"Validate epoch: {model.epoch}")
+
+        stats_list = defaultdict(list)
+        for index, batch in enumerate(pbar):
+            self.events.iteration_started(index)
+            stats = self.step(batch)
+            for l, (key, val) in enumerate(stats.items()):
+                pbar.update_line(l, f"{key}: {val:.4f}")
+                if isinstance(val, numbers.Number):
+                    stats_list[key].append(val)
+            self.events.iteration_completed(index)
+
+        for key, val in stats_list.items():
+            mean = sum(val) / len(val)
+            self.logger.add_scalar(key, mean, model.epoch)
+            print(f"Average {key}: {mean:.4f}.")
+
+        self.logger.flush()
+
+    @staticmethod
+    def try_rmtree(path):
+        if path.exists():
+            shutil.rmtree(path)
+            print(str(path), "removed.")
 
     @zouqi.command
     def clear(self):
         if input("Are you sure to clear? (y)\n").lower() == "y":
-            self.try_rmtree(Path(self.args.ckpt_dir, self.name))
-            self.try_rmtree(Path(self.args.log_dir, self.name))
+            self.try_rmtree(Path(self.args.ckpt_root, self.name))
+            self.try_rmtree(Path(self.args.logs_root, self.name))
         else:
             print(f"Not cleared.")
