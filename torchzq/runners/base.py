@@ -33,7 +33,8 @@ def parse_modes(cls):
 
 
 @contextlib.contextmanager
-def locked(self, key, value):
+def defined(self, key, value):
+    """Define the variable {key} with {value}, if it is already defined, do nothing."""
     occupied = hasattr(self, key)
     if not occupied:
         setattr(self, key, value)
@@ -42,42 +43,54 @@ def locked(self, key, value):
         delattr(self, key)
 
 
+@property
+def mode(self):
+    try:
+        return self._mode
+    except:
+        raise AttributeError("Mode is not set, call a mode function first.")
+
+
+@contextlib.contextmanager
+def redefined_mode(self, mode):
+    if mode not in self.modes:
+        raise ValueError(f"{mode} is not a registered mode.")
+    old_mode = self.mode
+    self._mode = mode
+    yield
+    self._mode = old_mode
+
+
 class MetaRunner(type):
     """
     Runner can be running in different modes, e.g. train, validate, test etc.
     Different mode will leads to different function behavior.
     This meta class automatically parse modes from the mode-determined function call.
-    The mode-determined function decides what would be the mode it runs on and locks
-    the mode variable until it returns.
+    The mode-determined function decides what would be the mode it runs on. One may
+    temporaly change the mode using with self.redefined_mode('').
     """
 
     def __new__(mcls, name, bases, attrs):
-        @property
-        def mode_prop(self):
-            try:
-                return self._mode
-            except:
-                raise AttributeError("Mode is not set, call a mode function first.")
-
-        attrs["mode"] = mode_prop
+        attrs["mode"] = mode
+        attrs["redefined_mode"] = redefined_mode
 
         cls = super().__new__(mcls, name, bases, attrs)
 
-        for mode in parse_modes(cls):
+        for name in parse_modes(cls):
             try:
-                f = getattr(cls, mode)
+                f = getattr(cls, name)
             except:
-                raise AttributeError(f'Mode "{mode}" not defined in "{cls.__name__}".')
+                raise AttributeError(f'Mode "{name}" not defined in "{cls.__name__}".')
 
-            def wrap(f, mode=mode):
+            def wrap(f, name=name):
                 @functools.wraps(f)
                 def wrapped(self, *args, **kwargs):
-                    with locked(self, "_mode", mode):
+                    with defined(self, "_mode", name):
                         return f(self, *args, **kwargs)
 
                 return wrapped
 
-            setattr(cls, mode, wrap(f))
+            setattr(cls, name, wrap(f))
 
         return cls
 
