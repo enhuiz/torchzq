@@ -1,13 +1,13 @@
 #!/bin/bash
 
-zouqi () {
+tzq () {
     cmd=$(python3 -m torchzq.cli $@)
     bash -c "$cmd"
 }
 
 case "$1" in
     *.y*ml)
-        zouqi "$@"
+        tzq "$@"
         ;;
     board)
         tensorboard "${@:2}"
