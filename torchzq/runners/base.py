@@ -281,13 +281,9 @@ class BaseRunner(metaclass=MetaRunner):
         names = [
             "iteration_started",
             "iteration_completed",
+            "epoch_started",
+            "epoch_completed",
         ]
-
-        if self.training:
-            names += [
-                "epoch_started",
-                "epoch_completed",
-            ]
 
         events = create_events(*names)
 
@@ -364,7 +360,7 @@ class BaseRunner(metaclass=MetaRunner):
                 stats = self.step(batch)
                 pbar.update_line(0, f"iteration: {model.iteration}")
                 for l, (key, val) in enumerate(stats.items(), 1):
-                    pbar.update_line(l, f"{key}: {val:.4f}")
+                    pbar.update_line(l, f"{key}: {val:.4g}")
                     logger.add_scalar(key, val, model.iteration)
                 self.logger.flush()
                 self.events.iteration_completed(model.iteration)
@@ -372,10 +368,8 @@ class BaseRunner(metaclass=MetaRunner):
             self.events.epoch_completed(model.epoch)
 
     @zouqi.command
-    def validate(
-        self,
-        epoch: int = None,
-    ):
+    @torch.no_grad()
+    def validate(self, epoch: int = None):
         self.update_args(locals(), "self")
         self.init_state()
 
@@ -387,21 +381,21 @@ class BaseRunner(metaclass=MetaRunner):
         pbar.set_description(f"Validate epoch: {model.epoch}")
 
         stats_list = defaultdict(list)
+        self.events.epoch_started()
         for index, batch in enumerate(pbar):
             self.events.iteration_started(index)
             stats = self.step(batch)
             for l, (key, val) in enumerate(stats.items()):
-                pbar.update_line(l, f"{key}: {val:.4f}")
+                pbar.update_line(l, f"{key}: {val:.4g}")
                 if isinstance(val, numbers.Number):
                     stats_list[key].append(val)
             self.events.iteration_completed(index)
-
         for key, val in stats_list.items():
             mean = sum(val) / len(val)
             self.logger.add_scalar(key, mean, model.epoch)
-            print(f"Average {key}: {mean:.4f}.")
-
+            print(f"Average {key}: {mean:.4g}.")
         self.logger.flush()
+        self.events.epoch_completed()
 
     @staticmethod
     def try_rmtree(path):
