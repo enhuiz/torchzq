@@ -90,6 +90,7 @@ class BaseRunner(metaclass=MetaRunner):
 
     # global states
     model = None
+    scheduler = None
     optimizer = None
     scaler = None
     saver = None
@@ -122,10 +123,6 @@ class BaseRunner(metaclass=MetaRunner):
     @property
     def dataset(self):
         return self.data_loader.dataset
-
-    @property
-    def scheduler(self):
-        return self.state.scheduler
 
     @property
     def logger(self):
@@ -249,6 +246,9 @@ class BaseRunner(metaclass=MetaRunner):
         if self.model is not None:
             return
 
+        # scheduler (should before the model)
+        self.scheduler = self.create_scheduler()
+
         # model
         self.model = self.create_model()
         self.model.to(args.device)
@@ -310,9 +310,6 @@ class BaseRunner(metaclass=MetaRunner):
             return
 
         state = argparse.Namespace()
-
-        # scheduler
-        state.scheduler = self.create_scheduler()
 
         # logger
         state.logger = self.create_logger()
