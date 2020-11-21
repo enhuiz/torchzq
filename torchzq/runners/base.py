@@ -27,76 +27,18 @@ from torchzq.events import create_events
 from torchzq.pbar import create_pbar
 
 
-def parse_modes(cls):
-    modes = []
-    for base in cls.__bases__:
-        modes += parse_modes(base)
-    modes += vars(cls).get("modes", [])
-    return list(set(modes))
+class Mode(str):
+    pass
 
 
-@contextlib.contextmanager
-def working_mode(self, new):
-    old = getattr(self, "_mode", None)
-    setattr(self, "_mode", new)
-    yield
-    if old is None:
-        delattr(self, "_mode")
-    else:
-        setattr(self, "_mode", old)
-
-
-class MetaRunner(type):
-    """
-    Runner can be running in different modes, e.g. train, validate, test etc.
-    Different mode will leads to different function behavior.
-    This meta class automatically parse modes from the mode-determined function call.
-    The mode-determined function decides what would be the mode it runs on.
-    """
-
-    def __new__(mcls, name, bases, attrs):
-        @property
-        def mode(self):
-            try:
-                return self._mode
-            except:
-                raise AttributeError("Mode is not set, call a mode function first.")
-
-        attrs["mode"] = mode
-
-        cls = super().__new__(mcls, name, bases, attrs)
-
-        for name in parse_modes(cls):
-            try:
-                f = getattr(cls, name)
-            except:
-                raise AttributeError(f'Mode "{name}" not defined in "{cls.__name__}".')
-
-            def wrap(f, name=name):
-                @functools.wraps(f)
-                def wrapped(self, *args, **kwargs):
-                    with working_mode(self, name):
-                        return f(self, *args, **kwargs)
-
-                return wrapped
-
-            setattr(cls, name, wrap(f))
-
-        return cls
-
-
-class BaseRunner(metaclass=MetaRunner):
-    modes = ["train", "validate"]
-
-    # global states
+class BaseRunner:
     model = None
     scheduler = None
     optimizer = None
     scaler = None
     saver = None
 
-    # mode states
-    states = argparse.Namespace()
+    modes = []
 
     def __init__(
         self,
@@ -109,16 +51,19 @@ class BaseRunner(metaclass=MetaRunner):
         logs_root: Path = "logs",
         quiet: flag = False,
         use_fp16: boolean = False,
+        epoch: int = None,
     ):
         self.update_args(locals(), "self")
 
     @property
-    def state(self):
-        return getattr(self.states, self.mode)
+    def mode(self):
+        if len(self.modes) == 0:
+            raise RuntimeError('No mode has been set, call "self.switch_mode()" first.')
+        return self.modes[0]
 
     @property
     def data_loader(self):
-        return self.state.data_loader
+        return self.mode.data_loader
 
     @property
     def dataset(self):
@@ -126,7 +71,7 @@ class BaseRunner(metaclass=MetaRunner):
 
     @property
     def logger(self):
-        return self.state.logger
+        return self.mode.logger
 
     @property
     def name(self):
@@ -146,7 +91,7 @@ class BaseRunner(metaclass=MetaRunner):
 
     @property
     def events(self):
-        return self.state.events
+        return self.mode.events
 
     @property
     def autocast_if_use_fp16(self):
@@ -191,9 +136,6 @@ class BaseRunner(metaclass=MetaRunner):
         if self.mode == "train":
             self.args.lr = scheduler.schedule(self.args.lr)
         return scheduler
-
-    def create_logger(self):
-        return SummaryWriter(self.logs_dir)
 
     def create_dataset(self):
         raise NotImplementedError
@@ -240,7 +182,7 @@ class BaseRunner(metaclass=MetaRunner):
 
         return optimizer
 
-    def init_global_state(self):
+    def init_global(self):
         args = self.args
 
         if self.model is not None:
@@ -265,7 +207,8 @@ class BaseRunner(metaclass=MetaRunner):
         self.saver = Saver(self.ckpt_dir)
 
         if self.training and not self.saver.is_empty and not args.continue_:
-            raise RuntimeError("Some checkpoints exist and continue not set.")
+            print("Some checkpoints exist and --continue not set, exiting...")
+            exit()
 
         self.saver.load(
             self.model,
@@ -277,14 +220,12 @@ class BaseRunner(metaclass=MetaRunner):
 
     def create_events(self):
         args = self.args
-
         names = [
             "iteration_started",
             "iteration_completed",
             "epoch_started",
             "epoch_completed",
         ]
-
         events = create_events(*names)
 
         if self.training:
@@ -296,33 +237,31 @@ class BaseRunner(metaclass=MetaRunner):
             def validate(epoch):
                 if epoch % args.validate_every == 0:
                     self.validate()
-                    self.model.train()
+                    self.switch_mode("train")
 
             events.epoch_completed.append(save)
             events.epoch_completed.append(validate)
 
         return events
 
-    def init_mode_state(self):
-        args = self.args
+    def init_mode(self):
+        self.init_global()
+        mode = self.mode
+        mode.logger = SummaryWriter(self.logs_dir)
+        mode.data_loader = self.create_data_loader(shuffle=self.training)
+        mode.events = self.create_events()
 
-        if hasattr(self.states, self.mode):
-            return
-
-        state = argparse.Namespace()
-
-        # logger
-        state.logger = self.create_logger()
-
-        state.data_loader = self.create_data_loader(shuffle=self.training)
-
-        state.events = self.create_events()
-
-        setattr(self.states, self.mode, state)
-
-    def init_state(self):
-        self.init_global_state()
-        self.init_mode_state()
+    def switch_mode(self, name):
+        """
+        Switch running mode.
+        """
+        # the first element in self.modes will be treated as the current mode
+        if name in self.modes:
+            i = self.modes.index(name)
+            self.modes[0], self.modes[i] = self.modes[i], self.modes[0]
+        else:
+            self.modes.insert(0, Mode(name))
+            self.init_mode()
 
     def step(self, batch):
         raise NotImplementedError
@@ -336,10 +275,9 @@ class BaseRunner(metaclass=MetaRunner):
         save_every: int = 1,
         validate_every: int = 1,
         continue_: flag = False,
-        epoch: int = None,
     ):
         self.update_args(locals(), "self")
-        self.init_state()
+        self.switch_mode("train")
 
         args = self.args
         model = self.model
@@ -366,9 +304,9 @@ class BaseRunner(metaclass=MetaRunner):
 
     @zouqi.command
     @torch.no_grad()
-    def validate(self, epoch: int = None):
+    def validate(self):
         self.update_args(locals(), "self")
-        self.init_state()
+        self.switch_mode("validate")
 
         args = self.args
         model = self.model.eval()

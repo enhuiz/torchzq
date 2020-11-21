@@ -43,8 +43,6 @@ class Net(nn.Module):
 
 
 class Runner(torchzq.LegacyRunner):
-    modes = ["test"]
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -79,7 +77,7 @@ class Runner(torchzq.LegacyRunner):
     @torchzq.command
     def test(self, epoch=None):
         self.update_args(locals(), "self")
-        self.init_state()
+        self.switch_mode("test")
         pbar = self.create_pbar(self.data_loader)
         fake, real = [], []
         for batch in pbar:
