@@ -1,3 +1,4 @@
+import argparse
 from collections import defaultdict
 
 
@@ -7,5 +8,6 @@ class Event(list):
             f(*args, **kwargs)
 
 
-def create_events(*names):
-    return type("EventSystem", (), {name: Event() for name in names})
+class Events(argparse.Namespace):
+    def __init__(self, *names):
+        super().__init__(**{name: Event() for name in names})

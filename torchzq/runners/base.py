@@ -23,7 +23,7 @@ import zouqi
 from torchzq.parsing import boolean, flag, choices
 from torchzq.saver import Saver
 from torchzq.scheduler import Scheduler
-from torchzq.events import create_events
+from torchzq.events import Events
 from torchzq.pbar import create_pbar
 
 
@@ -223,10 +223,15 @@ class BaseRunner:
         names = [
             "iteration_started",
             "iteration_completed",
-            "epoch_started",
-            "epoch_completed",
+            "started",
+            "completed",
         ]
-        events = create_events(*names)
+        if self.training:
+            names += [
+                "epoch_started",
+                "epoch_completed",
+            ]
+        events = Events(*names)
 
         if self.training:
 
@@ -273,9 +278,12 @@ class BaseRunner:
         weight_decay: float = 0,
         max_epochs: int = 100,
         save_every: int = 1,
-        validate_every: int = 1,
+        validate_every: int = None,
         continue_: flag = False,
     ):
+        if validate_every is None:
+            validate_every = save_every
+
         self.update_args(locals(), "self")
         self.switch_mode("train")
 
@@ -283,6 +291,7 @@ class BaseRunner:
         model = self.model
         logger = self.logger
 
+        self.events.started()
         while model.epoch < args.max_epochs:
             model.epoch += 1
             self.events.epoch_started(model.epoch)
@@ -301,6 +310,7 @@ class BaseRunner:
                 self.events.iteration_completed(model.iteration)
             pbar.close()
             self.events.epoch_completed(model.epoch)
+        self.events.completed()
 
     @zouqi.command
     @torch.no_grad()
@@ -316,7 +326,7 @@ class BaseRunner:
         pbar.set_description(f"Validate epoch: {model.epoch}")
 
         stats_list = defaultdict(list)
-        self.events.epoch_started()
+        self.events.started()
         for index, batch in enumerate(pbar):
             self.events.iteration_started(index)
             stats = self.step(batch)
@@ -330,7 +340,7 @@ class BaseRunner:
             self.logger.add_scalar(key, mean, model.epoch)
             print(f"Average {key}: {mean:.4g}.")
         self.logger.flush()
-        self.events.epoch_completed()
+        self.events.completed()
 
     @staticmethod
     def try_rmtree(path):
