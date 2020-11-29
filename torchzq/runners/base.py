@@ -243,6 +243,7 @@ class BaseRunner:
                 if epoch % args.validate_every == 0:
                     self.validate()
                     self.switch_mode("train")
+                    self.model.train()
 
             events.epoch_completed.append(save)
             events.epoch_completed.append(validate)
