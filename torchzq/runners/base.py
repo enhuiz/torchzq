@@ -269,14 +269,14 @@ class BaseRunner:
             self.saver.load(scaler=self.scaler)
 
     def prepare_all(self):
-        self.prepare_saver()
-        self.prepare_data_loader()
-        self.prepare_scheduler()
-        self.prepare_model()
-        self.prepare_optimizer()
-        self.prepare_scaler()
-        self.prepare_events()
-        self.prepare_logger()
+        pipeline = lambda *levels: [f() for level in levels for f in level]
+        pipeline(
+            [self.prepare_saver, self.prepare_scheduler],
+            [self.prepare_data_loader],
+            [self.prepare_model],
+            [self.prepare_optimizer, self.prepare_scaler],
+            [self.prepare_events, self.prepare_logger],
+        )
 
     def switch_mode(self, name):
         """

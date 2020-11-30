@@ -26,7 +26,7 @@ class Saver:
 
     @property
     def empty(self):
-        return self.latest_epoch == 1
+        return self.latest_epoch == 0
 
     @property
     def latest_epoch(self):
