@@ -28,7 +28,9 @@ from torchzq.pbar import create_pbar
 
 
 class Mode(str):
-    pass
+    logger = None
+    events = None
+    data_loader = None
 
 
 class BaseRunner:
@@ -104,6 +106,10 @@ class BaseRunner:
     @property
     def Optimizer(self):
         return torch.optim.Adam
+
+    @property
+    def latest_epoch(self):
+        return self.saver.latest_epoch
 
     def update_args(self, payload, ignored=[]):
         if type(ignored) is str:
@@ -185,39 +191,6 @@ class BaseRunner:
     def init_global(self):
         args = self.args
 
-        if self.model is not None:
-            return
-
-        # scheduler (should before the model)
-        self.scheduler = self.create_scheduler()
-
-        # model
-        self.model = self.create_model()
-        self.model.to(args.device)
-
-        # fp16
-        if args.use_fp16:
-            self.scaler = torch.cuda.amp.GradScaler()
-
-        # optimizer
-        if self.training:
-            self.optimizer = self.create_optimizer(self.model)
-
-        # saver
-        self.saver = Saver(self.ckpt_dir)
-
-        if self.training and not self.saver.is_empty and not args.continue_:
-            print("Some checkpoints exist and --continue not set, exiting...")
-            exit()
-
-        self.saver.load(
-            self.model,
-            self.optimizer,
-            self.scaler,
-            epoch=args.epoch,
-            strict=args.strict_loading,
-        )
-
     def create_events(self):
         args = self.args
         names = [
@@ -250,12 +223,60 @@ class BaseRunner:
 
         return events
 
-    def init_mode(self):
-        self.init_global()
-        mode = self.mode
-        mode.logger = SummaryWriter(self.logs_dir)
-        mode.data_loader = self.create_data_loader(shuffle=self.training)
-        mode.events = self.create_events()
+    def prepare_saver(self):
+        if self.saver is None:
+            self.saver = Saver(self.ckpt_dir)
+
+    def prepare_events(self):
+        if self.events is None:
+            self.mode.events = self.create_events()
+
+    def prepare_logger(self):
+        if self.logger is None:
+            self.mode.logger = SummaryWriter(self.logs_dir)
+
+    def prepare_data_loader(self):
+        # data_loader should be before the model
+        if self.data_loader is None:
+            self.mode.data_loader = self.create_data_loader(shuffle=self.training)
+
+    def prepare_scheduler(self):
+        # scheduler should be before the model
+        if self.scheduler is None:
+            self.scheduler = self.create_scheduler()
+
+    def prepare_model(self):
+        args = self.args
+        if self.model is None:
+            self.model = self.create_model()
+            self.model.to(args.device)
+            self.model.epoch = 0
+            self.model.iteration = 0
+            if self.training and not self.saver.empty and not args.continue_:
+                print('Checkpoints exist and "--continue" not set, exited.')
+                exit()
+            self.saver.load(model=self.model, cache=True)
+
+    def prepare_optimizer(self):
+        if self.optimizer is None and self.training:
+            self.optimizer = self.create_optimizer(self.model)
+            self.saver.load(optimizer=self.optimizer)
+
+    def prepare_scaler(self):
+        args = self.args
+        if self.scaler is None and args.use_fp16:
+            self.scaler = torch.cuda.amp.GradScaler()
+            self.saver.load(scaler=self.scaler)
+
+    def prepare_all(self):
+        self.prepare_saver()
+        self.prepare_data_loader()
+        self.prepare_scheduler()
+        self.prepare_model()
+        self.prepare_optimizer()
+        self.prepare_scaler()
+        self.prepare_events()
+        self.prepare_logger()
 
     def switch_mode(self, name):
         """
@@ -267,7 +288,7 @@ class BaseRunner:
             self.modes[0], self.modes[i] = self.modes[i], self.modes[0]
         else:
             self.modes.insert(0, Mode(name))
-            self.init_mode()
+            self.prepare_all()
 
     def step(self, batch):
         raise NotImplementedError

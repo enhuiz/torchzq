@@ -2,7 +2,7 @@ import torch
 from pathlib import Path
 
 
-def load_state_dict(model, state_dict, strict):
+def load_state_dict_safe(model, state_dict, strict):
     if strict:
         model.load_state_dict(state_dict, strict=True)
     else:
@@ -19,65 +19,81 @@ def load_state_dict(model, state_dict, strict):
 
 
 class Saver:
-    def __init__(self, root):
+    def __init__(self, root, strict=True):
         self.root = root
-        self.last_epoch = self.get_last_epoch()
+        self.strict = strict
+        self.cache = {}
 
     @property
-    def is_empty(self):
-        return self.last_epoch == 0
+    def empty(self):
+        return self.latest_epoch == 1
 
-    def get_last_epoch(self):
-        paths = list(self.root.glob("*.pth"))
-        if paths:
-            last_epoch = int(max(paths, key=lambda p: int(p.stem)).stem)
+    @property
+    def latest_epoch(self):
+        if not hasattr(self, "_latest_epoch") is None:
+            paths = list(self.root.glob("*.pth"))
+            if paths:
+                self._latest_epoch = int(max(paths, key=lambda p: int(p.stem)).stem)
+            else:
+                self._latest_epoch = 0
+        return self._latest_epoch
+
+    def read_state_dict(self, epoch, cache=False):
+        path = self.root / f"{epoch}.pth"
+        if path in self.cache:
+            state_dict = self.cache[path]
         else:
-            last_epoch = 0
-        return last_epoch
-
-    def load(self, model, optimizer=None, scaler=None, epoch=None, strict=True):
-        epoch = self.last_epoch if epoch is None else epoch
-        iteration = 0
-
-        if epoch > 0:
-            path = self.root / f"{epoch}.pth"
-
             state_dict = torch.load(path, "cpu")
+            if cache:
+                self.cache[path] = state_dict
+        return state_dict
 
-            load_state_dict(model, state_dict["model"], strict)
+    def load(
+        self,
+        model=None,
+        optimizer=None,
+        scaler=None,
+        epoch=None,
+        cache=False,
+    ):
+        epoch = epoch or self.latest_epoch
 
-            iteration = state_dict.get("iteration", 0)
+        if epoch == 0:
+            return
 
-            # during testing, optimizer is None
-            if optimizer is not None:
-                try:
-                    optimizer.load_state_dict(state_dict["optimizer"])
-                except Exception as e:
-                    print(e)
-                    print("Warning: loading optimizer state dict failed.")
+        state_dict = self.read_state_dict(epoch, cache)
 
-            # without fp16, scaler is None
-            if scaler is not None:
-                try:
-                    scaler.load_state_dict(state_dict["scaler"])
-                except Exception as e:
-                    print(e)
-                    print("Warning: loading scaler state dict failed.")
+        if model is not None:
+            load_state_dict_safe(model, state_dict["model"], self.strict)
+            model.epoch = epoch
+            model.iteration = state_dict.get("iteration", 0)
+            print(f"==> Model at epoch {epoch} loaded.")
 
-            print(f"{path} loaded.")
+        if optimizer is not None:
+            try:
+                optimizer.load_state_dict(state_dict["optimizer"])
+                print(f"==> Optimizer at epoch {epoch} loaded.")
+            except Exception as e:
+                print(e)
+                print("Warning: loading optimizer state dict failed.")
 
-        model.epoch = epoch
-        model.iteration = iteration
+        if scaler is not None:
+            try:
+                scaler.load_state_dict(state_dict["scaler"])
+                print(f"==> Scaler at epoch {epoch} loaded.")
+            except Exception as e:
+                print(e)
+                print("Warning: loading scaler state dict failed.")
 
     def save(self, model, optimizer=None, scaler=None):
         self.root.mkdir(parents=True, exist_ok=True)
-        path = self.root / f"{model.epoch}.pth"
         state_dict = dict(
             iteration=model.iteration,
             epoch=model.epoch,
-            model=model.state_dict() if model else None,
+            model=model.state_dict(),
             optimizer=optimizer.state_dict() if optimizer else None,
             scaler=scaler.state_dict() if scaler else None,
         )
+        path = self.root / f"{model.epoch}.pth"
         torch.save(state_dict, path)
         print(f"{path} saved.")
