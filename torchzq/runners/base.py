@@ -188,9 +188,6 @@ class BaseRunner:
 
         return optimizer
 
-    def init_global(self):
-        args = self.args
-
     def create_events(self):
         args = self.args
         names = [
