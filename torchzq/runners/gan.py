@@ -89,6 +89,8 @@ class GANRunner(BaseRunner):
     def step(self, batch):
         args = self.args
 
+        stats = {}
+
         logger = self.logger
 
         real, label = self.prepare_batch(batch)
@@ -121,8 +123,8 @@ class GANRunner(BaseRunner):
             d_loss = 0
             for name, loss in losses.items():
                 d_loss += loss
-                logger.add_scalar(name, loss.item())
-            logger.add_scalar("d_loss", d_loss.item())
+                stats[name] = loss.item()
+            stats["d_loss"] = d_loss.item()
 
         if self.training:
             if args.use_fp16:
@@ -139,7 +141,7 @@ class GANRunner(BaseRunner):
             else:
                 d_optimizer.step()
 
-            logger.add_scalar("d_lr", d_optimizer.get_lr())
+            stats["d_lr"] = d_optimizer.get_lr()
 
         # train g
         if self.training:
@@ -150,7 +152,7 @@ class GANRunner(BaseRunner):
             fake = self.feed(G, z, label)
             fake_output = self.feed(D, fake, label)
             g_loss = fake_output.mean()
-            logger.add_scalar("g_loss", g_loss.item())
+            stats["g_loss"] = g_loss.item()
 
         if self.training:
             if args.use_fp16:
@@ -167,7 +169,9 @@ class GANRunner(BaseRunner):
             else:
                 g_optimizer.step()
 
-            logger.add_scalar("g_lr", g_optimizer.get_lr())
+            stats["g_lr"] = g_optimizer.get_lr()
+
+        return stats
 
     @zouqi.command(inherit=True)
     def train(self, *args, g_lr=1e-3, d_lr=1e-3, lr=None, **kwargs):
