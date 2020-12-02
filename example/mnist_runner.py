@@ -71,8 +71,9 @@ class Runner(torchzq.LegacyRunner):
     def predict(self, x):
         return x.argmax(dim=-1)
 
-    def compute_loss(self, x, y):
-        return F.nll_loss(self.model(x), y)
+    def compute_loss(self, batch):
+        x, y = batch
+        return {"nll_loss": F.nll_loss(self.model(x), y)}
 
     @torchzq.command
     def test(self, epoch=None):

@@ -8,7 +8,7 @@ class LegacyRunner(BaseRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def compute_loss(self, x, y):
+    def compute_loss(self, batch) -> dict:
         raise NotImplementedError
 
     def prepare_batch(self, batch):
@@ -20,10 +20,15 @@ class LegacyRunner(BaseRunner):
         model = self.model
         stats = {}
 
-        x, y = self.prepare_batch(batch)
+        batch = self.prepare_batch(batch)
 
         with self.autocast_if_use_fp16():
-            loss = self.compute_loss(x, y)
+            losses = self.compute_loss(batch)
+
+        loss = 0
+        for key, value in losses.items():
+            stats[key] = value.item()
+            loss += value
 
         if self.training:
             optimizer = self.optimizer
@@ -53,8 +58,6 @@ class LegacyRunner(BaseRunner):
                 optimizer.zero_grad()
 
             stats["lr"] = optimizer.get_lr()
-
-        stats["loss"] = loss.item()
 
         return stats
 
