@@ -107,10 +107,6 @@ class BaseRunner:
     def Optimizer(self):
         return torch.optim.Adam
 
-    @property
-    def latest_epoch(self):
-        return self.saver.latest_epoch
-
     def update_args(self, payload, ignored=[]):
         if type(ignored) is str:
             ignored = [ignored]
@@ -222,7 +218,7 @@ class BaseRunner:
 
     def prepare_saver(self):
         if self.saver is None:
-            self.saver = Saver(self.ckpt_dir)
+            self.saver = Saver(self.ckpt_dir, self.args.strict_loading)
 
     def prepare_events(self):
         if self.events is None:
