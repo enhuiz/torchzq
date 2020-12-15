@@ -248,18 +248,18 @@ class BaseRunner:
             if self.training and not self.saver.empty and not args.continue_:
                 print('Checkpoints exist and "--continue" not set, exited.')
                 exit()
-            self.saver.load(model=self.model, cache=True)
+            self.saver.load(model=self.model, cache=True, epoch=args.epoch)
 
     def prepare_optimizer(self):
         if self.optimizer is None and self.training:
             self.optimizer = self.create_optimizer(self.model)
-            self.saver.load(optimizer=self.optimizer)
+            self.saver.load(optimizer=self.optimizer, epoch=args.epoch)
 
     def prepare_scaler(self):
         args = self.args
         if self.scaler is None and args.use_fp16:
             self.scaler = torch.cuda.amp.GradScaler()
-            self.saver.load(scaler=self.scaler)
+            self.saver.load(scaler=self.scaler, epoch=args.epoch)
 
     def prepare_all(self):
         pipeline = lambda *levels: [f() for level in levels for f in level]

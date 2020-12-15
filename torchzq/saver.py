@@ -56,7 +56,7 @@ class Saver:
         epoch=None,
         cache=False,
     ):
-        epoch = epoch or self.latest_epoch
+        epoch = self.latest_epoch if epoch is None else epoch
 
         if epoch == 0:
             return
