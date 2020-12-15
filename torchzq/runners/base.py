@@ -251,6 +251,7 @@ class BaseRunner:
             self.saver.load(model=self.model, cache=True, epoch=args.epoch)
 
     def prepare_optimizer(self):
+        args = self.args
         if self.optimizer is None and self.training:
             self.optimizer = self.create_optimizer(self.model)
             self.saver.load(optimizer=self.optimizer, epoch=args.epoch)
