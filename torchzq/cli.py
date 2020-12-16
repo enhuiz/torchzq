@@ -4,6 +4,10 @@ import argparse
 from pathlib import Path
 
 
+def empty_value():
+    pass
+
+
 def load_yaml(path, command):
     data = {}
     with open(path, "r") as f:
@@ -73,7 +77,7 @@ class ConfigParser:
             value = f'"{value}"'
         return str(value)
 
-    def parse_option(self, k, v=None):
+    def parse_option(self, k, v=empty_value):
         if k == "name":
             groups = re.findall("\$from\((.+?)\)", v)
             if groups:
@@ -84,7 +88,7 @@ class ConfigParser:
                     )
                 rpath = self.path.relative_to(path)
                 v = rpath.with_suffix("")
-        return f"{self.parse_key(k)} {'' if v is None else self.parse_value(v)}"
+        return f"{self.parse_key(k)} {'' if v is empty_value else self.parse_value(v)}"
 
     def parse_cmd(self, command, manual_arguments, manual_options):
         data = parse_yaml(self.path, command)
