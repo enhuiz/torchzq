@@ -317,7 +317,18 @@ class BaseRunner:
                 model.iteration += 1
                 self.events.iteration_started(model.iteration)
                 self.scheduler.step(model.epoch, model.iteration)
-                stats = self.step(batch)
+                try:
+                    stats = self.step(batch)
+                except RuntimeError as e:
+                    if "out of memory" in str(e):
+                        pbar.update_line(0, "OOM! Skip batch.")
+                        for p in self.model.parameters():
+                            if p.grad is not None:
+                                del p.grad  # free some memory
+                        torch.cuda.empty_cache()
+                        continue
+                    else:
+                        raise e
                 pbar.update_line(0, f"iteration: {model.iteration}")
                 for l, (key, val) in enumerate(stats.items(), 1):
                     pbar.update_line(l, f"{key}: {val:.4g}")
