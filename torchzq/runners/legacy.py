@@ -43,23 +43,28 @@ class LegacyRunner(BaseRunner):
                 if args.use_fp16:
                     self.scaler.unscale_(optimizer)
 
-                if args.grad_clip_thres is not None:
-                    grad_norm = nn.utils.clip_grad_norm_(
-                        model.parameters(),
-                        args.grad_clip_thres,
-                    )
-                    stats["grad_norm"] = grad_norm.item()
+                self.update_grad(stats)
 
                 if args.use_fp16:
                     self.scaler.step(optimizer)
                     self.scaler.update()
                 else:
                     optimizer.step()
+
                 optimizer.zero_grad()
 
             stats["lr"] = optimizer.get_lr()
 
         return stats
+
+    def update_grad(self, stats):
+        args = self.args
+        if args.grad_clip_thres is not None:
+            grad_norm = nn.utils.clip_grad_norm_(
+                self.model.parameters(),
+                args.grad_clip_thres,
+            )
+            stats["grad_norm"] = grad_norm.item()
 
     @zouqi.command
     def train(
