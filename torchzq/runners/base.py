@@ -15,6 +15,8 @@ from collections import defaultdict
 from torch.utils.data import DataLoader
 from functools import partial
 from collections import defaultdict
+from natsort import natsorted
+from treelib import Tree
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -382,3 +384,39 @@ class BaseRunner:
             self.try_rmtree(Path(self.args.logs_root, self.name))
         else:
             print(f"Not cleared.")
+
+    @zouqi.command
+    def ls(self):
+        self.print_tree(self.args.logs_root / self.name)
+        self.print_tree(self.args.ckpt_root / self.name)
+
+    @staticmethod
+    def print_tree(root):
+        tree = Tree()
+        first = True
+
+        for dirpath, _, files in os.walk(root):
+            dirpath = Path(dirpath)
+
+            if first:
+                parent = None
+            else:
+                parent = dirpath.parent
+
+            tree.create_node(
+                tag=f"{dirpath if first else dirpath.name}/",
+                identifier=dirpath,
+                parent=parent,
+            )
+
+            first = False
+
+            for f in natsorted(files):
+                filepath = dirpath / f
+                tree.create_node(
+                    tag=f"{filepath.name} ({time.ctime(filepath.lstat().st_mtime)})",
+                    identifier=filepath,
+                    parent=dirpath,
+                )
+
+        tree.show()
