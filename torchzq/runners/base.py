@@ -157,7 +157,7 @@ class BaseRunner:
                 num_workers="nj",
             ),
         )
-        print("Dataset size:", len(dataset))
+        print("==> Dataset size:", len(dataset))
         return data_loader
 
     def create_model(self):
@@ -333,7 +333,7 @@ class BaseRunner:
                         raise e
                 pbar.update_line(0, f"iteration: {model.iteration}")
                 for l, (key, val) in enumerate(stats.items(), 1):
-                    pbar.update_line(l, f"{key}: {val:.4g}")
+                    pbar.update_line(key, f"{key}: {val:.4g}")
                     logger.add_scalar(key, val, model.iteration)
                 self.logger.flush()
                 self.events.iteration_completed(model.iteration)
