@@ -21,6 +21,8 @@ setup(
         "tqdm",
         "pandas",
         "torchvision",
+        "treelib",
+        "natsort",
     ],
     url="https://github.com/enhuiz/torchzq",
 )
