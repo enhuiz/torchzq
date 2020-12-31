@@ -27,6 +27,8 @@ class LegacyRunner(BaseRunner):
 
         loss = 0
         for key, value in losses.items():
+            if not value.requires_grad:
+                key += " (no grad)"
             stats[key] = value.item()
             loss += value
 
