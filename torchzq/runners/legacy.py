@@ -1,6 +1,7 @@
 import torch.nn as nn
 import zouqi
 
+from ..parsing import optional
 from .base import BaseRunner
 
 
@@ -72,7 +73,7 @@ class LegacyRunner(BaseRunner):
     def train(
         self,
         update_every: int = 1,
-        grad_clip_thres: float = None,
+        grad_clip_thres: optional(float) = None,
         **kwargs,
     ):
         self.update_args(locals(), ["args", "kwargs", "self"])
