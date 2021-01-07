@@ -211,7 +211,6 @@ class BaseRunner:
                 if epoch % args.validate_every == 0:
                     self.validate()
                     self.switch_mode("train")
-                    self.model.train()
 
             events.epoch_completed.append(save)
             events.epoch_completed.append(validate)
@@ -285,6 +284,8 @@ class BaseRunner:
         else:
             self.modes.insert(0, Mode(name))
             self.prepare_all()
+        if self.training:
+            self.model.train()
 
     def step(self, batch):
         raise NotImplementedError
