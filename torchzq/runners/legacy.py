@@ -42,7 +42,7 @@ class LegacyRunner(BaseRunner):
             else:
                 (loss / args.update_every).backward()
 
-            if (model.iteration + 1) % args.update_every == 0:
+            if model.iteration % args.update_every == 0:
                 if args.use_fp16:
                     self.scaler.unscale_(optimizer)
 
