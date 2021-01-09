@@ -352,6 +352,7 @@ class BaseRunner:
 
         args = self.args
         logger = self.logger
+        model = self.model
 
         pbar = create_pbar(self.data_loader, args.quiet)
         pbar.set_description(f"Validate epoch: {model.epoch}")
