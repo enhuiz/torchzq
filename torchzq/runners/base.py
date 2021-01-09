@@ -286,6 +286,8 @@ class BaseRunner:
             self.prepare_all()
         if self.training:
             self.model.train()
+        elif self.model is not None:
+            self.model.eval()
 
     def step(self, batch):
         raise NotImplementedError
@@ -349,7 +351,6 @@ class BaseRunner:
         self.switch_mode("validate")
 
         args = self.args
-        model = self.model.eval()
         logger = self.logger
 
         pbar = create_pbar(self.data_loader, args.quiet)
