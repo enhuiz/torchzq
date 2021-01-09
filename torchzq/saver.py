@@ -26,7 +26,7 @@ class Saver:
 
     @property
     def empty(self):
-        return self.latest_epoch == 0
+        return self.latest_epoch is None
 
     @property
     def latest_epoch(self):
@@ -35,7 +35,7 @@ class Saver:
             if paths:
                 self._latest_epoch = int(max(paths, key=lambda p: int(p.stem)).stem)
             else:
-                self._latest_epoch = 0
+                self._latest_epoch = None
         return self._latest_epoch
 
     def read_state_dict(self, epoch, cache=False):
@@ -58,7 +58,7 @@ class Saver:
     ):
         epoch = self.latest_epoch if epoch is None else epoch
 
-        if epoch == 0:
+        if epoch is None:
             return
 
         state_dict = self.read_state_dict(epoch, cache)
