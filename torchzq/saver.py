@@ -6,9 +6,13 @@ def load_state_dict_safe(model, state_dict, strict):
     if strict:
         model.load_state_dict(state_dict, strict=True)
     else:
+        model_state_dict = model.state_dict()
         provided = set(state_dict)
-        required = set(model.state_dict())
+        required = set(model_state_dict)
         agreed = provided & required
+        for k in list(agreed):
+            if model_state_dict[k].shape != state_dict[k].shape:
+                agreed.remove(k)
         state_dict = {k: state_dict[k] for k in agreed}
         print("Provided but not required keys: ")
         print(provided - required)
