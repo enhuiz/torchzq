@@ -102,6 +102,10 @@ class BaseRunner:
         return partial(torch.cuda.amp.autocast, enabled=self.args.use_fp16)
 
     @property
+    def batch_size(self):
+        return self.args.batch_size
+
+    @property
     def Dataset(self):
         raise NotImplementedError
 
@@ -151,6 +155,7 @@ class BaseRunner:
             DataLoader,
             override=dict(
                 dataset=dataset,
+                batch_size=self.batch_size,
                 **kwargs,
             ),
             mapping=dict(
