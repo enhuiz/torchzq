@@ -387,6 +387,7 @@ class BaseRunner:
 
     @zouqi.command
     def clear(self):
+        self.ls()
         if input("Are you sure to clear? (y)\n").lower() == "y":
             self.try_rmtree(Path(self.args.ckpt_root, self.name))
             self.try_rmtree(Path(self.args.logs_root, self.name))
@@ -427,4 +428,5 @@ class BaseRunner:
                     parent=dirpath,
                 )
 
-        tree.show()
+        if not first:
+            tree.show()
