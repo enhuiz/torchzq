@@ -62,12 +62,11 @@ class LegacyRunner(BaseRunner):
 
     def update_grad(self, stats):
         args = self.args
-        if args.grad_clip_thres is not None:
-            grad_norm = nn.utils.clip_grad_norm_(
-                self.model.parameters(),
-                args.grad_clip_thres,
-            )
-            stats["grad_norm"] = grad_norm.item()
+        grad_norm = nn.utils.clip_grad_norm_(
+            self.model.parameters(),
+            args.grad_clip_thres or 1e9,
+        )
+        stats["grad_norm"] = grad_norm.item()
 
     @zouqi.command
     def train(
