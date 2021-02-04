@@ -11,6 +11,13 @@ class _ScheduleFunction:
         else:
             self.n = iteration
 
+    def __deepcopy__(self, memo):
+        print(
+            "==> Warning: you are deepcopying a scheduler, which is forbidden. "
+            "Shallow copy has been performed instead."
+        )
+        return self
+
 
 class Cosine(_ScheduleFunction):
     def __init__(self, start, stop, epochwise):
