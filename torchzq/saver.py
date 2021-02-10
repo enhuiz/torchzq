@@ -13,6 +13,7 @@ def load_state_dict_safe(model, state_dict, strict):
         for k in list(agreed):
             if model_state_dict[k].shape != state_dict[k].shape:
                 agreed.remove(k)
+                provided.remove(k)
         state_dict = {k: state_dict[k] for k in agreed}
         print("Provided but not required keys: ")
         print(provided - required)
