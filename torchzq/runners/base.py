@@ -56,6 +56,7 @@ class BaseRunner:
         quiet: flag = False,
         use_fp16: boolean = False,
         epoch: int = None,
+        discard_optimizer_state_dict: boolean = False,
     ):
         self.update_args(locals(), "self")
 
@@ -260,7 +261,8 @@ class BaseRunner:
         args = self.args
         if self.optimizer is None and self.training:
             self.optimizer = self.create_optimizer(self.model)
-            self.saver.load(optimizer=self.optimizer, epoch=args.epoch)
+            if not args.discard_optimizer_state_dict:
+                self.saver.load(optimizer=self.optimizer, epoch=args.epoch)
 
     def prepare_scaler(self):
         args = self.args
