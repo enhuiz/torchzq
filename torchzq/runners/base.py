@@ -256,6 +256,7 @@ class BaseRunner:
                 print('Checkpoints exist and "--continue" not set, exited.')
                 exit()
             self.saver.load(model=self.model, cache=True, epoch=args.epoch)
+            self.scheduler.step(epoch=self.model.epoch, iteration=self.model.iteration)
 
     def prepare_optimizer(self):
         args = self.args
