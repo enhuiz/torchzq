@@ -122,7 +122,8 @@ class BaseRunner:
             if key in payload:
                 del payload[key]
         self.args = getattr(self, "args", argparse.Namespace())
-        self.args = argparse.Namespace(**{**vars(self.args), **payload})
+        for k, v in payload.items():
+            setattr(self.args, k, v)
 
     def autofeed(self, f, override={}, mapping={}):
         """Priority: 1. override, 2. parsed args 3. parameters' default"""
