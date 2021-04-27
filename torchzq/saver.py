@@ -1,80 +1,101 @@
+import contextlib
 import torch
+from pathlib import Path
+from functools import lru_cache
 
 
-def load_state_dict_safe(model, state_dict, strict):
-    if strict:
-        model.load_state_dict(state_dict, strict=True)
-    else:
-        model_state_dict = model.state_dict()
-        provided = set(state_dict)
-        required = set(model_state_dict)
-        agreed = provided & required
-        for k in list(agreed):
-            if model_state_dict[k].shape != state_dict[k].shape:
-                agreed.remove(k)
-                provided.remove(k)
-        state_dict = {k: state_dict[k] for k in agreed}
+def load_state_dict_non_strict(model, state_dict):
+    model_state_dict = model.state_dict()
+    provided = set(state_dict)
+    required = set(model_state_dict)
+    agreed = provided & required
+    for k in list(agreed):
+        if model_state_dict[k].shape != state_dict[k].shape:
+            agreed.remove(k)
+            provided.remove(k)
+    state_dict = {k: state_dict[k] for k in agreed}
+    if (diff := provided - required) :
         print("Provided but not required keys: ")
-        print(provided - required)
+        print(diff)
+    if (diff := required - provided) :
         print("Required but not provided keys: ")
         print(required - provided)
-        model.load_state_dict(state_dict, strict=False)
+    model.load_state_dict(state_dict, strict=False)
     return model
+
+
+@lru_cache
+def cached_load_ckpt(path):
+    return torch.load(path, "cpu")
+
+
+class Buffer(dict):
+    def __init__(self, to_path):
+        self.to_path = to_path
+
+    def __call__(self, model, optimizers=[], scaler=None):
+        self[self.to_path(model)] = dict(
+            iteration=model.iteration,
+            epoch=model.epoch,
+            model=model.state_dict(),
+            optimizer=[optimizer.state_dict() for optimizer in optimizers],
+            scaler=scaler.state_dict() if scaler else None,
+        )
+
+    def dump(self):
+        for path, state_dict in self.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(state_dict, path)
+            print(f"{path} saved.")
+        self.clear()
 
 
 class Saver:
     def __init__(self, root, strict=True):
-        self.root = root
+        self.root = Path(root)
         self.strict = strict
-        self.cache = {}
+        self.buffer = Buffer(self.to_path)
+
+    @property
+    def ckpts(self):
+        return list(self.root.glob("*.ckpt"))
 
     @property
     def empty(self):
-        return self.latest_epoch is None
+        return len(self.ckpts) > 0
 
     @property
-    def latest_epoch(self):
-        if not hasattr(self, "_latest_epoch") is None:
-            paths = list(self.root.glob("*.pth"))
-            if paths:
-                self._latest_epoch = int(max(paths, key=lambda p: int(p.stem)).stem)
-            else:
-                self._latest_epoch = None
-        return self._latest_epoch
+    def latest_ckpt(self):
+        return max(self.ckpts, key=lambda ckpt: self.parse(ckpt)[1], default=None)
 
-    def read_state_dict(self, epoch, cache=False):
-        path = self.root / f"{epoch}.pth"
-        if path in self.cache:
-            state_dict = self.cache[path]
-        else:
-            state_dict = torch.load(path, "cpu")
-            if cache:
-                self.cache[path] = state_dict
-        return state_dict
+    def to_path(self, model):
+        return self.root / f"epoch={model.epoch}-iteration={model.iteration}.ckpt"
 
-    def load(
-        self,
-        model=None,
-        optimizers=[],
-        scaler=None,
-        epoch=None,
-        cache=False,
-    ):
-        epoch = self.latest_epoch if epoch is None else epoch
+    def parse(self, path):
+        epoch, iteration = map(lambda kv: int(kv.split("=")[1]), path.stem.split("-"))
+        return epoch, iteration
 
-        if epoch is None:
+    def load(self, ckpt=None, model=None, optimizers=[], scaler=None, epoch=None):
+        ckpt = ckpt or self.latest_ckpt
+
+        if ckpt is None:
             return
 
-        state_dict = self.read_state_dict(epoch, cache)
+        state_dict = cached_load_ckpt(ckpt)
 
         if model is not None:
-            load_state_dict_safe(model, state_dict["model"], self.strict)
-            model.epoch = epoch
-            model.iteration = state_dict.get("iteration", 0)
-            print(f"Model at epoch {epoch} loaded.")
+            if self.strict:
+                load_state_dict_non_strict(model, state_dict["model"])
+            else:
+                model.load_state_dict(state_dict["model"])
+            model.epoch, model.iteration = self.parse(ckpt)
+            print(f"Model epoch={model.epoch} iteration={model.iteration} loaded.")
 
         for i, (optimizer, optimizer_state_dict) in enumerate(
-            zip(optimizers, state_dict.get("optimizers", []))
+            zip(
+                optimizers,
+                state_dict.get("optimizers", []),
+            )
         ):
             try:
                 optimizer.load_state_dict(optimizer_state_dict)
@@ -95,14 +116,6 @@ class Saver:
                 print("Warning: loading scaler state dict failed.")
 
     def save(self, model, optimizers=[], scaler=None):
-        self.root.mkdir(parents=True, exist_ok=True)
-        state_dict = dict(
-            iteration=model.iteration,
-            epoch=model.epoch,
-            model=model.state_dict(),
-            optimizer=[optimizer.state_dict() for optimizer in optimizers],
-            scaler=scaler.state_dict() if scaler else None,
-        )
-        path = self.root / f"{model.epoch}.pth"
-        torch.save(state_dict, path)
-        print(f"{path} saved.")
+        buffer = Buffer(self.to_path)
+        buffer(model, optimizers, scaler)
+        buffer.dump()

@@ -1,6 +1,6 @@
+import sys
 import os
 import shutil
-import argparse
 import numbers
 import torch
 import torch.nn as nn
@@ -59,6 +59,7 @@ class Runner:
     optimizers = immutable("optimizers")
     scheduler = immutable("scheduler")
     scaler = immutable("scaler")
+    args = immutable("args")
 
     def __init__(
         self,
@@ -67,14 +68,12 @@ class Runner:
         nj: int = min(os.cpu_count(), 12),
         device: str = "cuda",
         strict_loading: boolean = True,
-        ckpt_root: Path = Path("ckpt"),
-        logs_root: Path = Path("logs"),
+        runs_root: Path = Path("runs"),
         quiet: flag = False,
         use_fp16: boolean = False,
-        epoch: int = None,
+        ckpt: Path = None,
         lr: str = "1e-3",
     ):
-        self.update_args(locals(), "self")
         self.modes = []
 
     @property
@@ -92,12 +91,16 @@ class Runner:
         return self.mode == "train"
 
     @property
+    def run_dir(self):
+        return self.args.runs_root / self.name
+
+    @property
     def logs_dir(self):
-        return self.args.logs_root / self.name / self.mode
+        return self.run_dir / "logs" / self.mode
 
     @property
     def ckpt_dir(self):
-        return self.args.ckpt_root / self.name
+        return self.run_dir / "ckpts"
 
     @property
     def events(self):
@@ -118,17 +121,6 @@ class Runner:
     @property
     def DataLoader(self):
         return DataLoader
-
-    def update_args(self, payload, ignored=[]):
-        if type(ignored) is str:
-            ignored = [ignored]
-        ignored += ["__class__"]
-        for key in ignored:
-            if key in payload:
-                del payload[key]
-        self.args = getattr(self, "args", argparse.Namespace())
-        for k, v in payload.items():
-            setattr(self.args, k, v)
 
     @staticmethod
     def set_lr(optimizer, lr):
@@ -198,8 +190,8 @@ class Runner:
             self.model.iteration = 0
             if self.training and not self.saver.empty and not args.continue_:
                 print('Checkpoints exist and "--continue" not set, exited.')
-                exit()
-            self.saver.load(model=self.model, cache=True, epoch=args.epoch)
+                sys.exit(0)
+            self.saver.load(args.ckpt, model=self.model)
             self.scheduler.step(epoch=self.model.epoch, iteration=self.model.iteration)
 
     def prepare_optimizer(self):
@@ -211,13 +203,13 @@ class Runner:
                     for k, v in state.items():
                         if torch.is_tensor(v):
                             state[k] = v.to(args.device)
-            self.saver.load(optimizers=self.optimizers, epoch=args.epoch)
+            self.saver.load(args.ckpt, optimizers=self.optimizers)
 
     def prepare_scaler(self):
         args = self.args
         if self.scaler is None and args.use_fp16:
             self.scaler = torch.cuda.amp.GradScaler()
-            self.saver.load(scaler=self.scaler, epoch=args.epoch)
+            self.saver.load(args.ckpt, scaler=self.scaler, epoch=args.epoch)
 
     @staticmethod
     def run_pipeline(*stages):
@@ -250,7 +242,7 @@ class Runner:
         elif self.model is not None:
             self.model.eval()
 
-    def training_step(self, batch, optimizer_index) -> tuple[dict, dict]:
+    def training_step(self, batch, optimizer_index) -> tuple[torch.Tensor, dict]:
         raise NotImplementedError
 
     def validation_step(self, batch, batch_index) -> dict:
@@ -259,10 +251,10 @@ class Runner:
             stats.update(self.training_step(batch, i)[1])
         return stats
 
-    def testing_step(self, batch, batch_index):
+    def testing_step(self, batch, batch_index) -> dict:
         raise NotImplementedError
 
-    def __training_step(self, batch) -> dict:
+    def training_step_with_optimization(self, batch) -> dict:
         args = self.args
         model = self.model
         stats = {}
@@ -287,6 +279,7 @@ class Runner:
                     self.model.parameters(),
                     args.grad_clip_thres or 1e9,
                 )
+
                 stats["grad_norm"] = grad_norm.item()
 
                 if args.use_fp16:
@@ -303,70 +296,53 @@ class Runner:
         if not self.training:
             print("Warning: You are calling training loop in non-training mode!")
 
+        running = True
         args = self.args
         model = self.model
         logger = self.logger
 
-        while model.epoch < args.max_epochs:
+        while model.epoch < args.max_epochs and running:
             model.epoch += 1
             desc = f"Train: {model.epoch}/{args.max_epochs}"
             pbar = ProgressBar(self.data_loader, args.quiet, desc=desc)
-            for batch in pbar:
-                try:
-                    stats = self.__training_step(batch)
-                except RuntimeError as e:
-                    if "out of memory" in str(e):
-                        pbar.update_line(0, "OOM! Skip batch.", "{v}")
-                        for p in model.parameters():
-                            if p.grad is not None:
-                                del p.grad  # free some memory
-                        torch.cuda.empty_cache()
-                        continue
-                    else:
-                        raise e
-                pbar.update_line(0, f"iteration: {model.iteration}", "{v}")
-                for key, val in stats.items():
-                    pbar.update_line(key, val)
-
-                if model.iteration % args.log_every == 0:
-                    for key, val in stats.items():
-                        logger.add_scalar(key, val, model.iteration)
-                    logger.flush()
+            try:
+                for batch in pbar:
+                    try:
+                        stats = self.training_step_with_optimization(batch)
+                        pbar.update_line(0, f"iteration: {model.iteration}", "{v}")
+                        for key, val in stats.items():
+                            pbar.update_line(key, val)
+                        if model.iteration % args.log_every == 0:
+                            for key, val in stats.items():
+                                logger.add_scalar(key, val, model.iteration)
+                            logger.flush()
+                    except RuntimeError as e:
+                        if "out of memory" in str(e):
+                            pbar.update_line(0, "OOM! Skip batch.", "{v}")
+                            for p in model.parameters():
+                                if p.grad is not None:
+                                    del p.grad  # free some memory
+                            torch.cuda.empty_cache()
+                            continue
+                        else:
+                            raise e
+            except KeyboardInterrupt as e:
+                print("Trying to gracefully shutting down.")
+                self.saver.buffer.dump()
+                running = False
 
             pbar.close()
-
             if model.epoch % args.save_every == 0:
                 self.saver.save(model, self.optimizers, self.scaler)
 
-            if model.epoch % args.validate_every == 0:
-                self.validate()
-                self.switch_mode("train")
+            if running:
+                self.saver.buffer.clear()
+                self.saver.buffer(model, self.optimizers, self.scaler)
+                if model.epoch % args.validate_every == 0:
+                    self.validate()
+                    self.switch_mode("train")
 
-    @zouqi.command
-    def train(
-        self,
-        weight_decay: float = 0,
-        max_epochs: int = 100,
-        save_every: int = 1,
-        validate_every: int = None,
-        update_every: int = 1,
-        log_every: int = 10,
-        grad_clip_thres: float = 1.0,
-        continue_: flag = False,
-    ):
-        if validate_every is None:
-            validate_every = save_every
-        self.update_args(locals(), "self")
-        self.switch_mode("validate")
-        self.non_training_loop(
-            "Validation loop sanity checking ...",
-            self.validation_step,
-            sanity_check=True,
-        )
-        self.switch_mode("train")
-        self.training_loop()
-
-    def non_training_loop(self, desc, step, sanity_check=False):
+    def val_test_loop(self, desc, step, sanity_check=False):
         args = self.args
         model = self.model
         data_loader = self.data_loader
@@ -387,19 +363,41 @@ class Runner:
         self.logger.flush()
 
     @zouqi.command
-    def validate(self):
-        self.update_args(locals(), "self")
+    def train(
+        self,
+        weight_decay: float = 0,
+        max_epochs: int = 100,
+        save_every: int = 1,
+        validate_every: int = None,
+        update_every: int = 1,
+        log_every: int = 10,
+        grad_clip_thres: float = 1.0,
+        continue_: flag = False,
+    ):
+        args = self.args
+        if validate_every is None:
+            args.validate_every = save_every
         self.switch_mode("validate")
-        self.non_training_loop(
+        self.val_test_loop(
+            "Validation loop sanity checking ...",
+            self.validation_step,
+            sanity_check=True,
+        )
+        self.switch_mode("train")
+        self.training_loop()
+
+    @zouqi.command
+    def validate(self):
+        self.switch_mode("validate")
+        self.val_test_loop(
             f"Validating epoch {self.model.epoch} ...",
             self.validation_step,
         )
 
     @zouqi.command
-    def test(self, ckpt=None):
-        self.update_args(locals(), "self")
+    def test(self):
         self.switch_mode("test")
-        self.non_training_loop(
+        self.val_test_loop(
             f"Testing epoch {self.model.epoch} ...",
             self.testing_step,
         )
@@ -412,14 +410,14 @@ class Runner:
 
     @zouqi.command
     def clear(self):
+        args = self.args
         self.ls()
         if input("Are you sure to clear? (y)\n").lower() == "y":
-            self.try_rmtree(Path(self.args.ckpt_root, self.name))
-            self.try_rmtree(Path(self.args.logs_root, self.name))
+            self.try_rmtree(args.runs_root / self.name)
         else:
             print(f"Not cleared.")
 
     @zouqi.command
     def ls(self):
-        print_directory_tree(self.args.logs_root / self.name)
-        print_directory_tree(self.args.ckpt_root / self.name)
+        args = self.args
+        print_directory_tree(args.runs_root / self.name)

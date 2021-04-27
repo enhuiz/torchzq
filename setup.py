@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 with open("README.md", "r") as f:
     long_description = f.read()
@@ -12,11 +12,11 @@ setup(
     author_email="niuzhe.nz@outlook.com",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    packages=["torchzq", "torchzq/runners"],
+    packages=find_packages(),
     scripts=["tzq"],
     install_requires=[
         "torch",
-        "zouqi==1.0.5",
+        "zouqi==1.0.7",
         "pyyaml",
         "tqdm",
         "pandas",
