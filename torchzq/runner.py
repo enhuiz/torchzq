@@ -328,16 +328,17 @@ class Runner:
                             raise e
             except KeyboardInterrupt as e:
                 print("Trying to gracefully shutdown.")
+                # the last full-epoch model
                 self.saver.buffer.dump()
-                running = False
-
-            pbar.close()
-            if model.epoch % args.save_every == 0:
+                # the current model
                 self.saver.save(model, self.optimizers, self.scaler)
-
+                running = False
+            pbar.close()
             if running:
                 self.saver.buffer.clear()
                 self.saver.buffer(model, self.optimizers, self.scaler)
+                if model.epoch % args.save_every == 0:
+                    self.saver.save(model, self.optimizers, self.scaler)
                 if model.epoch % args.validate_every == 0:
                     self.validate()
                     self.switch_mode("train")
