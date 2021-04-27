@@ -71,31 +71,16 @@ class Runner(torchzq.LegacyRunner):
     def predict(self, x):
         return x.argmax(dim=-1)
 
-    def compute_loss(self, batch):
-        x, y = batch
-        return {"nll_loss": F.nll_loss(self.model(x), y)}
+    def training_step(self, batch, optimizer_index):
+        x, y = self.prepare_batch(batch)
+        loss = F.nll_loss(self.model(x), y)
+        return loss, {"nll_loss": loss.item()}
 
-    @torchzq.command
-    def test(self, epoch=None):
-        self.update_args(locals(), "self")
-        self.switch_mode("test")
-        pbar = self.create_pbar(self.data_loader)
-        fake, real = [], []
-        for batch in pbar:
-            x, y = self.prepare_batch(batch)
-            fake += self.model(x).argmax(dim=-1).cpu().tolist()
-            real += y.cpu().tolist()
-        self.evaluate(fake, real)
-
-    def evaluate(self, x, y):
-        x = torch.tensor(x)
-        y = torch.tensor(y)
-        correct = (x == y).sum()
-        print(
-            "Test set: Accuracy: {}/{} ({:.0f}%)".format(
-                correct, len(y), 100.0 * correct / len(y)
-            )
-        )
+    @torch.no_grad()
+    def testing_step(self, batch, batch_index):
+        x, y = self.prepare_batch(batch)
+        y_ = self.model(x).argmax(dim=-1)
+        return {"accuracy": (y_ == y).float().mean().item()}
 
 
 if __name__ == "__main__":

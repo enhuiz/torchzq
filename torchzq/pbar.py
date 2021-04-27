@@ -1,44 +1,44 @@
+import time
 import tqdm
+import numbers
 from collections import defaultdict
 
-from torchzq.utils import Timer
+from .utils import EMAMeter
 
 
-def create_pbar(iterable, quiet):
-    pbar = tqdm.tqdm(iterable, dynamic_ncols=True, disable=quiet)
+class ProgressBar(tqdm.tqdm):
+    def __init__(self, iterable, dynamic_ncols=True, mininterval=0.5, **kwargs):
+        super().__init__(
+            iterable,
+            dynamic_ncols=dynamic_ncols,
+            mininterval=mininterval,
+            **kwargs,
+        )
+        self.mininterval = mininterval
+        self.lines = defaultdict(self.create_line)
+        self.emas = defaultdict(EMAMeter)
 
-    close = pbar.close
+    def timeup(self):
+        return time.time() - self.last_print_t > self.mininterval
 
-    create_line = lambda: tqdm.tqdm(bar_format="╰{postfix}")
+    def create_line(self):
+        return tqdm.tqdm(bar_format="╰ {unit}")
 
-    if quiet:
-        items = {}
-        line = create_line()
+    def update_line(self, k, v, fmt=None):
+        if isinstance(v, numbers.Number):
+            v = self.emas[k](v)
+            fmt = fmt or "{k}: {v:.4g}"
+        else:
+            fmt = fmt or "{k}: {v}"
+        first_update = k not in self.lines
+        line = self.lines[k]
+        line.unit = fmt.format(k=k, v=v)
+        if first_update:
+            line.refresh()
+        elif self.timeup():
+            line.refresh()
 
-        timer = Timer(10)
-
-        def update_line(i, s):
-            items[i] = s
-            if timer.timeup():
-                line.set_postfix_str(", ".join(items.values()) + "\n")
-                timer.restart()
-
-        def close_all():
-            close()
+    def close(self):
+        super().close()
+        for line in self.lines.values():
             line.close()
-
-    else:
-        lines = defaultdict(create_line)
-
-        def update_line(i, s):
-            lines[i].set_postfix_str(s)
-
-        def close_all():
-            close()
-            for line in lines.values():
-                line.close()
-
-    pbar.update_line = update_line
-    pbar.close = close_all
-
-    return pbar

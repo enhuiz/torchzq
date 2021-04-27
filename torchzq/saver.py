@@ -1,5 +1,4 @@
 import torch
-from pathlib import Path
 
 
 def load_state_dict_safe(model, state_dict, strict):
@@ -56,7 +55,7 @@ class Saver:
     def load(
         self,
         model=None,
-        optimizer=None,
+        optimizers=[],
         scaler=None,
         epoch=None,
         cache=False,
@@ -72,31 +71,36 @@ class Saver:
             load_state_dict_safe(model, state_dict["model"], self.strict)
             model.epoch = epoch
             model.iteration = state_dict.get("iteration", 0)
-            print(f"==> Model at epoch {epoch} loaded.")
+            print(f"Model at epoch {epoch} loaded.")
 
-        if optimizer is not None:
+        for i, (optimizer, optimizer_state_dict) in enumerate(
+            zip(optimizers, state_dict.get("optimizers", []))
+        ):
             try:
-                optimizer.load_state_dict(state_dict["optimizer"])
-                print(f"==> Optimizer at epoch {epoch} loaded.")
+                optimizer.load_state_dict(optimizer_state_dict)
+                # sanity check
+                optimizer.zero_grad()
+                optimizer.step()
+                print(f"Optimizer at epoch {epoch} loaded.")
             except Exception as e:
                 print(e)
-                print("Warning: loading optimizer state dict failed.")
+                print(f"Warning: fail to load state dict for optimizer {i}.")
 
         if scaler is not None:
             try:
                 scaler.load_state_dict(state_dict["scaler"])
-                print(f"==> Scaler at epoch {epoch} loaded.")
+                print(f"Scaler at epoch {epoch} loaded.")
             except Exception as e:
                 print(e)
                 print("Warning: loading scaler state dict failed.")
 
-    def save(self, model, optimizer=None, scaler=None):
+    def save(self, model, optimizers=[], scaler=None):
         self.root.mkdir(parents=True, exist_ok=True)
         state_dict = dict(
             iteration=model.iteration,
             epoch=model.epoch,
             model=model.state_dict(),
-            optimizer=optimizer.state_dict() if optimizer else None,
+            optimizer=[optimizer.state_dict() for optimizer in optimizers],
             scaler=scaler.state_dict() if scaler else None,
         )
         path = self.root / f"{model.epoch}.pth"

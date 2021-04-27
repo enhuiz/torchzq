@@ -4,14 +4,23 @@ import math
 class _ScheduleFunction:
     def __init__(self, epochwise):
         self.epochwise = epochwise
+        self.listeners = []
 
     def step(self, epoch, iteration):
         if self.epochwise:
             self.n = epoch
         else:
             self.n = iteration
+        for listener in self.listeners:
+            listener(self())
 
-    def __deepcopy__(self, memo):
+    def add_listeners(self, listener):
+        self.listeners.append(listener)
+
+    def __call__(self) -> int:
+        raise NotImplementedError
+
+    def __deepcopy__(self, _):
         print(
             "==> Warning: you are deepcopying a scheduler, which is forbidden. "
             "Shallow copy has been performed instead."

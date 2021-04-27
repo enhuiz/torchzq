@@ -1,32 +1,65 @@
 import os
 import shutil
 import argparse
-import inspect
 import numbers
 import torch
 import torch.nn as nn
-from deprecated import deprecated
 from pathlib import Path
 from collections import defaultdict
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from functools import partial
 from collections import defaultdict
-from natsort import natsorted
 
 import zouqi
 
-from torchzq.parsing import boolean, flag
-from torchzq.saver import Saver
-from torchzq.scheduler import Scheduler
-from torchzq.pbar import ProgressBar
+from .parsing import boolean, flag
+from .saver import Saver
+from .scheduler import Scheduler
+from .pbar import ProgressBar
+from .utils import print_directory_tree
+
+
+def immutable(name):
+    def getter(self):
+        return getattr(self, "__" + name, None)
+
+    def setter(self, x):
+        assert getter(self) == None, "Immutable variable cannot be set twice!"
+        setattr(self, "__" + name, x)
+
+    return property(getter, setter)
+
+
+def delegate(delegate_cls, name):
+    attrs = set(delegate_cls.__dict__.keys())
+
+    def wrapped(cls):
+        nonexist_attrs = attrs - set(cls.__dict__.keys())
+        for attr in nonexist_attrs:
+            getsrc = lambda self: getattr(self, name)
+            getter = lambda self, attr=attr: getattr(getsrc(self), attr)
+            setter = lambda self, x, attr=attr: setattr(getsrc(self), attr, x)
+            setattr(cls, attr, property(getter, setter))
+        return cls
+
+    return wrapped
 
 
 class Mode(str):
-    pass
+    dataset = immutable("dataset")
+    data_loader = immutable("data_loader")
+    logger = immutable("logger")
 
 
-class BaseRunner:
+@delegate(Mode, "mode")
+class Runner:
+    model = immutable("model")
+    saver = immutable("saver")
+    optimizers = immutable("optimizers")
+    scheduler = immutable("scheduler")
+    scaler = immutable("scaler")
+
     def __init__(
         self,
         name: str = "Unnamed",
@@ -39,6 +72,7 @@ class BaseRunner:
         quiet: flag = False,
         use_fp16: boolean = False,
         epoch: int = None,
+        lr: str = "1e-3",
     ):
         self.update_args(locals(), "self")
         self.modes = []
@@ -48,22 +82,6 @@ class BaseRunner:
         if len(self.modes) == 0:
             raise RuntimeError('No mode has been set, call "self.switch_mode()" first.')
         return self.modes[0]
-
-    @property
-    def data_loader(self):
-        return self.mode.data_loader
-
-    @property
-    def logger(self):
-        return self.mode.logger
-
-    @property
-    def scheduler(self):
-        return self.mode.scheduler
-
-    @property
-    def dataset(self):
-        return self.data_loader.dataset
 
     @property
     def name(self):
@@ -123,8 +141,7 @@ class BaseRunner:
 
     def create_scheduler(self):
         scheduler = Scheduler()
-        if self.mode == "train":
-            self.args.lr = scheduler.schedule(self.args.lr)
+        self.args.lr = scheduler.schedule(self.args.lr)
         return scheduler
 
     def create_dataset(self):
@@ -139,7 +156,7 @@ class BaseRunner:
             num_workers=args.nj,
             **kwargs,
         )
-        print("==> Dataset size:", len(dataset))
+        print("Dataset size:", len(dataset))
         return data_loader
 
     def create_model(self):
@@ -152,25 +169,29 @@ class BaseRunner:
         return [optimizer]
 
     def prepare_saver(self):
-        if not hasattr(self, "saver"):
+        if self.saver is None:
             self.saver = Saver(self.ckpt_dir, self.args.strict_loading)
 
     def prepare_logger(self):
         if self.logger is None:
-            self.mode.logger = SummaryWriter(self.logs_dir)
+            self.logger = SummaryWriter(self.logs_dir)
 
     def prepare_data_loader(self):
         # data_loader should be before the model
         if self.data_loader is None:
-            self.mode.data_loader = self.create_data_loader(shuffle=self.training)
+            self.data_loader = self.create_data_loader(
+                shuffle=self.training,
+                drop_last=not self.training,
+            )
 
     def prepare_scheduler(self):
         # scheduler should be before the model
-        self.mode.scheduler = self.create_scheduler()
+        if self.scheduler is None:
+            self.scheduler = self.create_scheduler()
 
     def prepare_model(self):
         args = self.args
-        if not hasattr(self, "model"):
+        if self.model is None:
             self.model = self.create_model()
             self.model.to(args.device)
             self.model.epoch = 0
@@ -183,7 +204,7 @@ class BaseRunner:
 
     def prepare_optimizer(self):
         args = self.args
-        if not hasattr(self, "optimizers") and self.training:
+        if self.optimizers is None:
             self.optimizers = self.create_optimizers()
             for optimizer in self.optimizers:
                 for state in optimizer.state.values():
@@ -194,7 +215,7 @@ class BaseRunner:
 
     def prepare_scaler(self):
         args = self.args
-        if not hasattr(self, "scaler") and args.use_fp16:
+        if self.scaler is None and args.use_fp16:
             self.scaler = torch.cuda.amp.GradScaler()
             self.saver.load(scaler=self.scaler, epoch=args.epoch)
 
@@ -210,7 +231,7 @@ class BaseRunner:
             [self.prepare_data_loader],
             [self.prepare_model],
             [self.prepare_optimizer, self.prepare_scaler],
-            [self.prepare_events, self.prepare_logger],
+            [self.prepare_logger],
         )
 
     def switch_mode(self, name):
@@ -232,140 +253,156 @@ class BaseRunner:
     def training_step(self, batch, optimizer_index) -> tuple[dict, dict]:
         raise NotImplementedError
 
-    def validation_step(self, batch) -> dict:
+    def validation_step(self, batch, batch_index) -> dict:
+        stats = {}
+        for i in range(len(self.optimizers)):
+            stats.update(self.training_step(batch, i)[1])
+        return stats
+
+    def testing_step(self, batch, batch_index):
         raise NotImplementedError
 
-    def testing_step(self, batch):
-        raise NotImplementedError
+    def __training_step(self, batch) -> dict:
+        args = self.args
+        model = self.model
+        stats = {}
 
-    @zouqi.command
-    def train(
-        self,
-        lr: str = "1e-3",
-        weight_decay: float = 0,
-        max_epochs: int = 100,
-        save_every: int = 1,
-        validate_every: int = None,
-        continue_: flag = False,
-    ):
-        if validate_every is None:
-            validate_every = save_every
+        model.iteration += 1
+        self.scheduler.step(model.epoch, model.iteration)
 
-        self.update_args(locals(), "self")
+        for optimizer_index, optimizer in enumerate(self.optimizers):
+            loss, local_stats = self.training_step(batch, optimizer_index)
+            stats.update(local_stats)
 
-        self.validate(sanity_check=True)
+            if args.use_fp16:
+                self.scaler.scale(loss / args.update_every).backward()
+            else:
+                (loss / args.update_every).backward()
 
-        self.switch_mode("train")
+            if model.iteration % args.update_every == 0:
+                if args.use_fp16:
+                    self.scaler.unscale_(optimizer)
+
+                grad_norm = nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    args.grad_clip_thres or 1e9,
+                )
+                stats["grad_norm"] = grad_norm.item()
+
+                if args.use_fp16:
+                    self.scaler.step(optimizer)
+                    self.scaler.update()
+                else:
+                    optimizer.step()
+
+                optimizer.zero_grad()
+
+        return stats
+
+    def training_loop(self):
+        if not self.training:
+            print("Warning: You are calling training loop in non-training mode!")
 
         args = self.args
         model = self.model
         logger = self.logger
 
-        self.events.started()
         while model.epoch < args.max_epochs:
             model.epoch += 1
-            self.events.epoch_started(model.epoch)
-
-            pbar = ProgressBar(
-                self.data_loader,
-                args.quiet,
-                desc=f"Train: {model.epoch}/{args.max_epochs}",
-            )
-
+            desc = f"Train: {model.epoch}/{args.max_epochs}"
+            pbar = ProgressBar(self.data_loader, args.quiet, desc=desc)
             for batch in pbar:
-                model.iteration += 1
-                self.events.iteration_started(model.iteration)
-                self.scheduler.step(model.epoch, model.iteration)
-                for optimizer_index, optimizer in enumerate(self.optimizers):
-                    try:
-                        loss, stats = self.training_step(batch, optimizer_index)
+                try:
+                    stats = self.__training_step(batch)
+                except RuntimeError as e:
+                    if "out of memory" in str(e):
+                        pbar.update_line(0, "OOM! Skip batch.", "{v}")
+                        for p in model.parameters():
+                            if p.grad is not None:
+                                del p.grad  # free some memory
+                        torch.cuda.empty_cache()
+                        continue
+                    else:
+                        raise e
+                pbar.update_line(0, f"iteration: {model.iteration}", "{v}")
+                for key, val in stats.items():
+                    pbar.update_line(key, val)
 
-                        if args.use_fp16:
-                            self.scaler.scale(loss / args.update_every).backward()
-                        else:
-                            (loss / args.update_every).backward()
-
-                        if model.iteration % args.update_every == 0:
-                            if args.use_fp16:
-                                self.scaler.unscale_(optimizer)
-
-                            stats["grad_norm"] = nn.utils.clip_grad_norm_(
-                                self.model.parameters(),
-                                args.grad_clip_thres or 1e9,
-                            ).item()
-
-                            if args.use_fp16:
-                                self.scaler.step(optimizer)
-                                self.scaler.update()
-                            else:
-                                optimizer.step()
-
-                            optimizer.zero_grad()
-
-                    except RuntimeError as e:
-                        if "out of memory" in str(e):
-                            pbar.update_line(0, "OOM! Skip batch.")
-                            for p in self.model.parameters():
-                                if p.grad is not None:
-                                    del p.grad  # free some memory
-                            torch.cuda.empty_cache()
-                            continue
-                        else:
-                            raise e
-
-                    pbar.update_line(0, f"iteration: {model.iteration}")
+                if model.iteration % args.log_every == 0:
                     for key, val in stats.items():
-                        pbar.update_line(key, f"{key}: {val:.4g}")
                         logger.add_scalar(key, val, model.iteration)
-                    self.logger.flush()
+                    logger.flush()
 
             pbar.close()
 
             if model.epoch % args.save_every == 0:
-                self.saver.save(self.model, self.optimizers, self.scaler)
+                self.saver.save(model, self.optimizers, self.scaler)
 
             if model.epoch % args.validate_every == 0:
                 self.validate()
                 self.switch_mode("train")
 
     @zouqi.command
-    @torch.no_grad()
-    def validate(self, sanity_check=False):
+    def train(
+        self,
+        weight_decay: float = 0,
+        max_epochs: int = 100,
+        save_every: int = 1,
+        validate_every: int = None,
+        update_every: int = 1,
+        log_every: int = 10,
+        grad_clip_thres: float = 1.0,
+        continue_: flag = False,
+    ):
+        if validate_every is None:
+            validate_every = save_every
         self.update_args(locals(), "self")
         self.switch_mode("validate")
+        self.non_training_loop(
+            "Validation loop sanity checking ...",
+            self.validation_step,
+            sanity_check=True,
+        )
+        self.switch_mode("train")
+        self.training_loop()
 
+    def non_training_loop(self, desc, step, sanity_check=False):
         args = self.args
         model = self.model
-
+        data_loader = self.data_loader
         if sanity_check:
-            pbar = ProgressBar(
-                [batch for batch, _ in zip(self.data_loader, range(3))],
-                args.quiet,
-                desc="Sanity check for validation ...",
-            )
-        else:
-            pbar = ProgressBar(
-                self.data_loader,
-                args.quiet,
-                desc=f"Validating epoch: {model.epoch}",
-            )
-
+            data_loader = [batch for batch, _ in zip(data_loader, range(3))]
+        pbar = ProgressBar(data_loader, args.quiet, desc=desc)
         stats_list = defaultdict(list)
-        self.events.started()
         for index, batch in enumerate(pbar):
-            self.events.iteration_started(index)
-            stats = self.step(batch)
-            for l, (key, val) in enumerate(stats.items()):
-                pbar.update_line(l, f"{key}: {val:.4g}")
+            stats = step(batch, index)
+            for key, val in stats.items():
+                pbar.update_line(key, val)
                 if isinstance(val, numbers.Number):
                     stats_list[key].append(val)
-            self.events.iteration_completed(index)
         for key, val in stats_list.items():
             mean = sum(val) / len(val)
             self.logger.add_scalar(key, mean, model.epoch)
             print(f"Average {key}: {mean:.4g}.")
         self.logger.flush()
-        self.events.completed()
+
+    @zouqi.command
+    def validate(self):
+        self.update_args(locals(), "self")
+        self.switch_mode("validate")
+        self.non_training_loop(
+            f"Validating epoch {self.model.epoch} ...",
+            self.validation_step,
+        )
+
+    @zouqi.command
+    def test(self, ckpt=None):
+        self.update_args(locals(), "self")
+        self.switch_mode("test")
+        self.non_training_loop(
+            f"Testing epoch {self.model.epoch} ...",
+            self.testing_step,
+        )
 
     @staticmethod
     def try_rmtree(path):
@@ -384,17 +421,5 @@ class BaseRunner:
 
     @zouqi.command
     def ls(self):
-        self.print_tree(self.args.logs_root / self.name)
-        self.print_tree(self.args.ckpt_root / self.name)
-
-    @classmethod
-    def print_tree(cls, root: Path, prefix: str = ""):
-        print(f"{prefix}{root.name if prefix else root}")
-        if root.is_dir():
-            base = prefix.replace("─", " ").replace("├", "│").replace("└", " ")
-            paths = natsorted(root.iterdir())
-            for i, path in enumerate(paths):
-                if i < len(paths) - 1:
-                    cls.print_tree(path, base + "├── ")
-                else:
-                    cls.print_tree(paths[-1], base + "└── ")
+        print_directory_tree(self.args.logs_root / self.name)
+        print_directory_tree(self.args.ckpt_root / self.name)
