@@ -327,7 +327,7 @@ class Runner:
                         else:
                             raise e
             except KeyboardInterrupt as e:
-                print("Trying to gracefully shutting down.")
+                print("Trying to gracefully shutdown.")
                 self.saver.buffer.dump()
                 running = False
 
