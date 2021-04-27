@@ -209,7 +209,7 @@ class Runner:
         args = self.args
         if self.scaler is None and args.use_fp16:
             self.scaler = torch.cuda.amp.GradScaler()
-            self.saver.load(args.ckpt, scaler=self.scaler, epoch=args.epoch)
+            self.saver.load(args.ckpt, scaler=self.scaler)
 
     @staticmethod
     def run_pipeline(*stages):
