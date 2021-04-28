@@ -278,8 +278,13 @@ class Runner:
         self.scheduler.step(model.epoch, model.iteration)
 
         for optimizer_index, optimizer in enumerate(self.optimizers):
-            loss, local_stats = self.training_step(batch, optimizer_index)
-            stats.update(local_stats)
+            outputs = self.training_step(batch, optimizer_index)
+
+            if isinstance(outputs, torch.Tensor):
+                loss = outputs
+            else:
+                loss = outputs[0]
+                stats.update(outputs[1])
 
             if args.use_fp16:
                 self.scaler.scale(loss / args.update_every).backward()
@@ -368,7 +373,7 @@ class Runner:
         stats_list = defaultdict(list)
         for index, batch in enumerate(pbar):
             stats = step(batch, index)
-            for key, val in stats.items():
+            for key, val in (stats or {}).items():
                 pbar.update_line(key, val)
                 if isinstance(val, numbers.Number):
                     stats_list[key].append(val)
