@@ -184,8 +184,7 @@ class Runner:
         # data_loader should be before the model
         if self.data_loader is None:
             self.data_loader = self.create_data_loader(
-                shuffle=self.training,
-                drop_last=not self.training,
+                shuffle=self.training, drop_last=self.training
             )
 
     def prepare_scheduler(self):
