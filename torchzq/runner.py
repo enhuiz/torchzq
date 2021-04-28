@@ -1,3 +1,4 @@
+from contextlib import redirect_stdout
 import sys
 import os
 import shutil
@@ -73,6 +74,7 @@ class Runner:
         use_fp16: boolean = False,
         ckpt: Path = None,
         lr: str = "1e-3",
+        from_scratch: flag = False,
     ):
         self.modes = []
 
@@ -89,6 +91,15 @@ class Runner:
     @property
     def training(self):
         return self.mode == "train"
+
+    @property
+    def ckpt(self):
+        args = self.args
+        if args.ckpt is not None:
+            return args.ckpt
+        if not args.from_scratch:
+            return self.saver.latest_ckpt
+        return None
 
     @property
     def run_dir(self):
@@ -161,8 +172,9 @@ class Runner:
         return [optimizer]
 
     def prepare_saver(self):
+        args = self.args
         if self.saver is None:
-            self.saver = Saver(self.ckpt_dir, self.args.strict_loading)
+            self.saver = Saver(self.ckpt_dir, args.strict_loading)
 
     def prepare_logger(self):
         if self.logger is None:
@@ -188,10 +200,7 @@ class Runner:
             self.model.to(args.device)
             self.model.epoch = 0
             self.model.iteration = 0
-            if self.training and not self.saver.empty and not args.continue_:
-                print('Checkpoints exist and "--continue" not set, exited.')
-                sys.exit(0)
-            self.saver.load(args.ckpt, model=self.model)
+            self.saver.load(self.ckpt, model=self.model)
             self.scheduler.step(epoch=self.model.epoch, iteration=self.model.iteration)
 
     def prepare_optimizer(self):
@@ -203,13 +212,13 @@ class Runner:
                     for k, v in state.items():
                         if torch.is_tensor(v):
                             state[k] = v.to(args.device)
-            self.saver.load(args.ckpt, optimizers=self.optimizers)
+            self.saver.load(self.ckpt, optimizers=self.optimizers)
 
     def prepare_scaler(self):
         args = self.args
         if self.scaler is None and args.use_fp16:
             self.scaler = torch.cuda.amp.GradScaler()
-            self.saver.load(args.ckpt, scaler=self.scaler)
+            self.saver.load(self.ckpt, scaler=self.scaler)
 
     @staticmethod
     def run_pipeline(*stages):
@@ -373,7 +382,6 @@ class Runner:
         update_every: int = 1,
         log_every: int = 10,
         grad_clip_thres: float = 1.0,
-        continue_: flag = False,
     ):
         args = self.args
         if validate_every is None:

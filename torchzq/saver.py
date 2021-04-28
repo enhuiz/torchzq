@@ -51,8 +51,8 @@ class Buffer(dict):
 
 
 class Saver:
-    def __init__(self, root, strict=True):
-        self.root = Path(root)
+    def __init__(self, root: Path, strict: bool = True):
+        self.root = root
         self.strict = strict
         self.buffer = Buffer(self.to_path)
 
@@ -75,9 +75,7 @@ class Saver:
         epoch, iteration = map(lambda kv: int(kv.split("=")[1]), path.stem.split("-"))
         return epoch, iteration
 
-    def load(self, ckpt=None, model=None, optimizers=[], scaler=None, epoch=None):
-        ckpt = ckpt or self.latest_ckpt
-
+    def load(self, ckpt, model=None, optimizers=[], scaler=None, epoch=None):
         if ckpt is None:
             return
 
