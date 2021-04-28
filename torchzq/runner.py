@@ -1,8 +1,8 @@
-from contextlib import redirect_stdout
-import sys
 import os
 import shutil
 import numbers
+import numpy as np
+import random
 import torch
 import torch.nn as nn
 from pathlib import Path
@@ -48,9 +48,8 @@ def delegate(delegate_cls, name):
 
 
 class Mode(str):
-    dataset = immutable("dataset")
-    data_loader = immutable("data_loader")
     logger = immutable("logger")
+    data_loader = immutable("data_loader")
 
 
 @delegate(Mode, "mode")
@@ -75,8 +74,12 @@ class Runner:
         ckpt: Path = None,
         lr: str = "1e-3",
         from_scratch: flag = False,
+        seed: int = 0,
     ):
         self.modes = []
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
 
     @property
     def mode(self):
@@ -87,6 +90,10 @@ class Runner:
     @property
     def name(self):
         return self.args.name
+
+    @property
+    def dataset(self):
+        return self.data_loader.dataset
 
     @property
     def training(self):
