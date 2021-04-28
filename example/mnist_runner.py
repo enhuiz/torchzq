@@ -42,7 +42,7 @@ class Net(nn.Module):
         return output
 
 
-class Runner(torchzq.LegacyRunner):
+class Runner(torchzq.Runner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 

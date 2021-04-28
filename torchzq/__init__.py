@@ -1,2 +1,2 @@
 from zouqi import command, start
-from .runner import Runner as LegacyRunner
+from .runner import Runner
