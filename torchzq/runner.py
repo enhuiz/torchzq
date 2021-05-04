@@ -350,8 +350,6 @@ class Runner:
                 print("Trying to gracefully shutdown.")
                 # the last full-epoch model
                 self.saver.buffer.dump()
-                # the current model
-                self.saver.save(model, self.optimizers, self.scaler)
                 running = False
             pbar.close()
             if running:
