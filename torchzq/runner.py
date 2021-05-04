@@ -432,10 +432,13 @@ class Runner:
     def clear(self):
         args = self.args
         self.ls()
-        if input("Are you sure to clear? (y)\n").lower() == "y":
-            self.try_rmtree(args.runs_root / self.name)
+        if (args.runs_root / self.name).exists():
+            if input("Are you sure to clear? (y)\n").lower() == "y":
+                self.try_rmtree(args.runs_root / self.name)
+            else:
+                print(f"Not cleared.")
         else:
-            print(f"Not cleared.")
+            print("Nothing to clear.")
 
     @zouqi.command
     def ls(self):
