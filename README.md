@@ -1,4 +1,4 @@
-# TorchZQ: A simple PyTorch experiment runner based on Zouqi.
+# TorchZQ: A PyTorch experiment runner based on [Zouqi](https://github.com/enhuiz/zouqi)
 
 ## Installation
 
