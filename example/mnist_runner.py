@@ -3,15 +3,10 @@
 An MNIST example for TorchZQ.
 """
 
-import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import datasets, transforms
-
-import sys
-
-sys.path.append(".")
 
 import torchzq
 
@@ -67,9 +62,6 @@ class Runner(torchzq.Runner):
         x = x.to(self.args.device)
         y = y.to(self.args.device)
         return x, y
-
-    def predict(self, x):
-        return x.argmax(dim=-1)
 
     def training_step(self, batch, optimizer_index):
         x, y = self.prepare_batch(batch)
