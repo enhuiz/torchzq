@@ -302,7 +302,7 @@ class Runner:
                     args.grad_clip_thres or 1e9,
                 )
 
-                stats["grad_norm"] = grad_norm.item()
+                stats[f"grad_norm_{optimizer_index}"] = grad_norm.item()
 
                 if args.use_fp16:
                     self.scaler.step(optimizer)
