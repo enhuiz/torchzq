@@ -213,6 +213,8 @@ class Runner:
         args = self.args
         if self.optimizers is None:
             self.optimizers = self.create_optimizers()
+            if len(self.optimizers) == 0:
+                raise ValueError("There should be at least 1 optimizer but get 0.")
             for optimizer in self.optimizers:
                 for state in optimizer.state.values():
                     for k, v in state.items():
@@ -316,12 +318,11 @@ class Runner:
         if not self.training:
             print("Warning: You are calling training loop in non-training mode!")
 
-        running = True
         args = self.args
         model = self.model
         logger = self.logger
 
-        while model.epoch < args.max_epochs and running:
+        while model.epoch < args.max_epochs:
             model.epoch += 1
             desc = f"Train: {model.epoch}/{args.max_epochs}"
             pbar = ProgressBar(self.data_loader, args.quiet, desc=desc)
@@ -346,20 +347,20 @@ class Runner:
                             continue
                         else:
                             raise e
+                pbar.close()
+
+                self.saver.buffer.clear()
+                self.saver.buffer(model, self.optimizers, self.scaler)
+                if model.epoch % args.save_every == 0:
+                    self.saver.buffer.dump()
+                if model.epoch % args.validate_every == 0:
+                    self.validate()
+                    self.switch_mode("train")
             except KeyboardInterrupt as e:
                 print("Trying to gracefully shutdown.")
                 # the last full-epoch model
                 self.saver.buffer.dump()
-                running = False
-            pbar.close()
-            if running:
-                self.saver.buffer.clear()
-                self.saver.buffer(model, self.optimizers, self.scaler)
-                if model.epoch % args.save_every == 0:
-                    self.saver.save(model, self.optimizers, self.scaler)
-                if model.epoch % args.validate_every == 0:
-                    self.validate()
-                    self.switch_mode("train")
+                break
 
     def val_test_loop(self, desc, step, sanity_check=False):
         args = self.args
