@@ -259,16 +259,16 @@ class Runner:
         elif self.model is not None:
             self.model.eval()
 
-    def training_step(self, batch, optimizer_index) -> tuple[torch.Tensor, dict]:
+    def training_step(self, batch, optimizer_idx: int) -> tuple[torch.Tensor, dict]:
         raise NotImplementedError
 
-    def validation_step(self, batch, batch_index) -> dict:
+    def validation_step(self, batch, batch_idx: int) -> dict:
         stats = {}
         for i in range(len(self.optimizers)):
             stats.update(self.training_step(batch, i)[1])
         return stats
 
-    def testing_step(self, batch, batch_index) -> dict:
+    def testing_step(self, batch, batch_idx: int) -> dict:
         raise NotImplementedError
 
     def training_step_with_optimization(self, batch) -> dict:
@@ -279,8 +279,8 @@ class Runner:
         model.iteration += 1
         self.scheduler.step(model.epoch, model.iteration)
 
-        for optimizer_index, optimizer in enumerate(self.optimizers):
-            outputs = self.training_step(batch, optimizer_index)
+        for optimizer_idx, optimizer in enumerate(self.optimizers):
+            outputs = self.training_step(batch, optimizer_idx)
 
             if isinstance(outputs, torch.Tensor):
                 loss = outputs
@@ -302,7 +302,7 @@ class Runner:
                     args.grad_clip_thres or 1e9,
                 )
 
-                stats[f"grad_norm_{optimizer_index}"] = grad_norm.item()
+                stats[f"grad_norm_{optimizer_idx}"] = grad_norm.item()
 
                 if args.use_fp16:
                     self.scaler.step(optimizer)
