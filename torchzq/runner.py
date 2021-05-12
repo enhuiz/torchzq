@@ -1,3 +1,4 @@
+import sys
 import os
 import shutil
 import numbers
@@ -5,6 +6,7 @@ import numpy as np
 import random
 import torch
 import torch.nn as nn
+import signal
 from pathlib import Path
 from collections import defaultdict
 from torch.utils.data import DataLoader
@@ -19,6 +21,7 @@ from .saver import Saver
 from .scheduler import Scheduler
 from .pbar import ProgressBar
 from .utils import print_directory_tree
+from .interrupt import graceful_interrupt_handler
 
 
 def immutable(name):
@@ -280,7 +283,8 @@ class Runner:
         self.scheduler.step(model.epoch, model.iteration)
 
         for optimizer_idx, optimizer in enumerate(self.optimizers):
-            outputs = self.training_step(batch, optimizer_idx)
+            with self.autocast_if_use_fp16():
+                outputs = self.training_step(batch, optimizer_idx)
 
             if isinstance(outputs, torch.Tensor):
                 loss = outputs
@@ -326,7 +330,16 @@ class Runner:
             model.epoch += 1
             desc = f"Train: {model.epoch}/{args.max_epochs}"
             pbar = ProgressBar(self.data_loader, args.quiet, desc=desc)
-            try:
+
+            def interrupt_callback(signum):
+                pbar.close()
+                print("Trying to gracefully shutdown ...")
+                self.saver.dump()
+                if signum == signal.SIGQUIT:
+                    self.saver.save(model, self.optimizers, self.scaler)
+                sys.exit(0)
+
+            with graceful_interrupt_handler(callback=interrupt_callback):
                 for batch in pbar:
                     try:
                         stats = self.training_step_with_optimization(batch)
@@ -348,19 +361,12 @@ class Runner:
                         else:
                             raise e
                 pbar.close()
-
-                self.saver.buffer.clear()
                 self.saver.buffer(model, self.optimizers, self.scaler)
                 if model.epoch % args.save_every == 0:
-                    self.saver.buffer.dump()
+                    self.saver.dump()
                 if model.epoch % args.validate_every == 0:
                     self.validate()
                     self.switch_mode("train")
-            except KeyboardInterrupt as e:
-                print("Trying to gracefully shutdown.")
-                # the last full-epoch model
-                self.saver.buffer.dump()
-                break
 
     def val_test_loop(self, desc, step, sanity_check=False):
         args = self.args
