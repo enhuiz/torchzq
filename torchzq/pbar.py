@@ -1,3 +1,4 @@
+import math
 import time
 import tqdm
 import numbers
@@ -25,7 +26,7 @@ class ProgressBar(tqdm.tqdm):
         return tqdm.tqdm(bar_format="╰ {unit}")
 
     def update_line(self, k, v, fmt=None):
-        if isinstance(v, numbers.Number):
+        if isinstance(v, numbers.Number) and math.isfinite(v):
             v = self.emas[k](v)
             fmt = fmt or "{k}: {v:.4g}"
         else:
