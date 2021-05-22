@@ -1,10 +1,13 @@
 import math
 
+from .parsing import scheduled
+
 
 class _ScheduleFunction:
     def __init__(self, epochwise):
         self.epochwise = epochwise
         self.listeners = []
+        self.n = 0
 
     def step(self, epoch, iteration):
         if self.epochwise:
@@ -26,6 +29,9 @@ class _ScheduleFunction:
             "Shallow copy has been performed instead."
         )
         return self
+
+    def __repr__(self):
+        return f"{type(self).__name__}(value={self()}, n={self.n})"
 
 
 class Cosine(_ScheduleFunction):
@@ -101,8 +107,8 @@ class Scheduler:
     def __init__(self):
         self._functions = []
 
-    def schedule(self, x):
-        x = eval(str(x))
+    def schedule(self, s: scheduled):
+        x = eval(str(s))
         if not callable(x):
             x = Constant(x)
         self._functions.append(x)

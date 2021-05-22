@@ -16,7 +16,7 @@ from collections import defaultdict
 
 import zouqi
 
-from .parsing import boolean, flag
+from .parsing import boolean, flag, scheduled
 from .saver import Saver
 from .scheduler import Scheduler
 from .pbar import ProgressBar
@@ -75,7 +75,7 @@ class Runner:
         quiet: flag = False,
         use_fp16: boolean = False,
         ckpt: Path = None,
-        lr: str = "1e-3",
+        lr: scheduled = "1e-3",
         from_scratch: flag = False,
         seed: int = 0,
     ):
@@ -154,7 +154,9 @@ class Runner:
 
     def create_scheduler(self):
         scheduler = Scheduler()
-        self.args.lr = scheduler.schedule(self.args.lr)
+        for k, v in list(vars(self.args).items()):
+            if isinstance(v, scheduled):
+                setattr(self.args, k, scheduler.schedule(v))
         return scheduler
 
     def create_dataset(self):
