@@ -16,7 +16,7 @@ setup(
     scripts=["tzq"],
     install_requires=[
         "torch",
-        "zouqi==1.0.7",
+        "zouqi==1.0.8",
         "pyyaml",
         "tqdm",
         "pandas",

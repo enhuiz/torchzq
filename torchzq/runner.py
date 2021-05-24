@@ -16,7 +16,7 @@ from collections import defaultdict
 
 import zouqi
 
-from .parsing import boolean, flag, scheduled
+from .typing import Flag, Scheduled
 from .saver import Saver
 from .scheduler import Scheduler
 from .pbar import ProgressBar
@@ -70,13 +70,13 @@ class Runner:
         batch_size: int = 32,
         nj: int = min(os.cpu_count(), 12),
         device: str = "cuda",
-        strict_loading: boolean = True,
+        strict_loading: bool = True,
         runs_root: Path = Path("runs"),
-        quiet: flag = False,
-        use_fp16: boolean = False,
+        quiet: Flag = False,
+        use_fp16: bool = False,
         ckpt: Path = None,
-        lr: scheduled = "1e-3",
-        from_scratch: flag = False,
+        lr: Scheduled = "1e-3",
+        from_scratch: Flag = False,
         seed: int = 0,
     ):
         self.modes = []
@@ -155,7 +155,7 @@ class Runner:
     def create_scheduler(self):
         scheduler = Scheduler()
         for k, v in list(vars(self.args).items()):
-            if isinstance(v, scheduled):
+            if isinstance(v, Scheduled):
                 setattr(self.args, k, scheduler.schedule(v))
         return scheduler
 
