@@ -1,7 +1,5 @@
 import math
 
-from .parsing import scheduled
-
 
 class _ScheduleFunction:
     def __init__(self, epochwise):
@@ -107,7 +105,7 @@ class Scheduler:
     def __init__(self):
         self._functions = []
 
-    def schedule(self, s: scheduled):
+    def schedule(self, s):
         x = eval(str(s))
         if not callable(x):
             x = Constant(x)

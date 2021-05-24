@@ -16,7 +16,7 @@ from collections import defaultdict
 
 import zouqi
 
-from .typing import Flag, Scheduled
+from .typing import Flag, Scheduled, _Scheduled
 from .saver import Saver
 from .scheduler import Scheduler
 from .pbar import ProgressBar
@@ -155,7 +155,7 @@ class Runner:
     def create_scheduler(self):
         scheduler = Scheduler()
         for k, v in list(vars(self.args).items()):
-            if isinstance(v, Scheduled):
+            if isinstance(v, _Scheduled):
                 setattr(self.args, k, scheduler.schedule(v))
         return scheduler
 

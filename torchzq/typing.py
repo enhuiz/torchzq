@@ -1,5 +1,8 @@
 from zouqi.typing import *
 
 
-class Scheduled(str):
+class _Scheduled(str):
     pass
+
+
+Scheduled = Annotated[str, dict(type=_Scheduled)]
