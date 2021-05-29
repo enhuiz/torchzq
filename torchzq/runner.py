@@ -1,3 +1,5 @@
+import time
+import yaml
 import sys
 import os
 import shutil
@@ -404,6 +406,11 @@ class Runner:
         args = self.args
         if validate_every is None:
             args.validate_every = save_every
+
+        time_str = time.strftime("%Y%m%dT%H%M%S")
+        with open(self.run_dir / f"config-{time_str}.yml", "w") as f:
+            yaml.dump(vars(args), f)
+
         self.switch_mode("validate")
         self.val_test_loop(
             "Validation loop sanity checking ...",
