@@ -410,6 +410,7 @@ class Runner:
         if validate_every is None:
             args.validate_every = save_every
 
+        self.run_dir.mkdir(parents=True, exist_ok=True)
         time_str = time.strftime("%Y%m%dT%H%M%S")
         with open(self.run_dir / f"config-{time_str}.yml", "w") as f:
             yaml.dump(vars(args), f)
