@@ -270,10 +270,10 @@ class Runner:
         raise NotImplementedError
 
     def validation_step(self, batch, batch_idx: int) -> dict:
-        stats = {}
+        stat_dict = {}
         for i in range(len(self.optimizers)):
-            stats.update(self.training_step(batch, i)[1])
-        return stats
+            stat_dict.update(self.training_step(batch, i)[1])
+        return stat_dict
 
     def testing_step(self, batch, batch_idx: int) -> dict:
         raise NotImplementedError
@@ -281,7 +281,8 @@ class Runner:
     def training_step_with_optimization(self, batch) -> dict:
         args = self.args
         model = self.model
-        stats = {}
+        stat_dict = {}
+        start_time = time.time()
 
         model.iteration += 1
         self.scheduler.step(model.epoch, model.iteration)
@@ -294,7 +295,7 @@ class Runner:
                 loss = outputs
             else:
                 loss = outputs[0]
-                stats.update(outputs[1])
+                stat_dict.update(outputs[1])
 
             if args.use_fp16:
                 self.scaler.scale(loss / args.update_every).backward()
@@ -310,7 +311,7 @@ class Runner:
                     args.grad_clip_thres or 1e9,
                 )
 
-                stats[f"grad_norm_{optimizer_idx}"] = grad_norm.item()
+                stat_dict[f"grad_norm_{optimizer_idx}"] = grad_norm.item()
 
                 if args.use_fp16:
                     self.scaler.step(optimizer)
@@ -320,7 +321,9 @@ class Runner:
 
                 optimizer.zero_grad()
 
-        return stats
+        stat_dict["elapsed_time"] = time.time() - start_time
+
+        return stat_dict
 
     def training_loop(self):
         if not self.training:
@@ -346,12 +349,12 @@ class Runner:
             with graceful_interrupt_handler(callback=interrupt_callback):
                 for batch in pbar:
                     try:
-                        stats = self.training_step_with_optimization(batch)
+                        stat_dict = self.training_step_with_optimization(batch)
                         pbar.update_line(0, f"iteration: {model.iteration}", "{v}")
-                        for key, val in stats.items():
+                        for key, val in stat_dict.items():
                             pbar.update_line(key, val)
                         if model.iteration % args.log_every == 0:
-                            for key, val in stats.items():
+                            for key, val in stat_dict.items():
                                 logger.add_scalar(key, val, model.iteration)
                             logger.flush()
                     except RuntimeError as e:
@@ -379,14 +382,14 @@ class Runner:
         if sanity_check:
             data_loader = [batch for batch, _ in zip(data_loader, range(3))]
         pbar = ProgressBar(data_loader, args.quiet, desc=desc)
-        stats_list = defaultdict(list)
+        stats_dict = defaultdict(list)
         for index, batch in enumerate(pbar):
-            stats = step(batch, index)
-            for key, val in (stats or {}).items():
+            stat_dict = step(batch, index)
+            for key, val in (stat_dict or {}).items():
                 pbar.update_line(key, val)
                 if isinstance(val, numbers.Number):
-                    stats_list[key].append(val)
-        for key, val in stats_list.items():
+                    stats_dict[key].append(val)
+        for key, val in stats_dict.items():
             mean = sum(val) / len(val)
             self.logger.add_scalar(key, mean, model.epoch)
             print(f"Average {key}: {mean:.4g}.")
