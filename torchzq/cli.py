@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 
-def empty_value():
+class empty_value:
     pass
 
 
