@@ -142,8 +142,16 @@ class Runner:
         raise NotImplementedError
 
     @property
+    def Optimizer(self):
+        return torch.optim.Adam
+
+    @property
     def DataLoader(self):
-        return DataLoader
+        return partial(
+            DataLoader,
+            shuffle=self.training,
+            drop_last=self.training,
+        )
 
     @staticmethod
     def set_lr(optimizer, lr):
@@ -164,14 +172,13 @@ class Runner:
     def create_dataset(self):
         raise NotImplementedError
 
-    def create_data_loader(self, **kwargs):
+    def create_data_loader(self):
         args = self.args
         dataset = self.create_dataset()
         data_loader = self.DataLoader(
             dataset=dataset,
             batch_size=self.batch_size,
             num_workers=args.nj,
-            **kwargs,
         )
         print("Dataset size:", len(dataset))
         return data_loader
@@ -181,7 +188,7 @@ class Runner:
 
     def create_optimizers(self):
         args = self.args
-        optimizer = torch.optim.Adam(params=self.model.parameters(), lr=1)
+        optimizer = self.Optimizer(params=self.model.parameters(), lr=1)
         args.lr.add_listeners(lambda lr: self.set_lr(optimizer, lr))
         return [optimizer]
 
@@ -197,9 +204,7 @@ class Runner:
     def prepare_data_loader(self):
         # data_loader should be before the model
         if self.data_loader is None:
-            self.data_loader = self.create_data_loader(
-                shuffle=self.training, drop_last=self.training
-            )
+            self.data_loader = self.create_data_loader()
 
     def prepare_scheduler(self):
         # scheduler should be before the model
