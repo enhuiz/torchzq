@@ -80,7 +80,6 @@ class Runner:
         from_scratch: Flag = False,
         seed: int = 0,
         wandb_project: str = "",
-        wandb_group: str = "",
     ):
         self.modes = []
         random.seed(seed)
@@ -197,11 +196,7 @@ class Runner:
     def prepare_logger(self):
         args = self.args
         if self.logger is None:
-            wandb.init(
-                config=args,
-                project=args.wandb_project,
-                group=args.wandb_group,
-            )
+            wandb.init(config=args, project=args.wandb_project, group=self.name)
             self.logger = wandb
 
     def prepare_data_loader(self):
