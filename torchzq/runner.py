@@ -384,7 +384,8 @@ class Runner:
         pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
         for index, batch in enumerate(pbar):
-            stat_dict = step_fn(batch, index)
+            for k, v in step_fn(batch, index).items():
+                stats_dict[k].append(v)
         stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
         stat_dict["epoch"] = model.epoch
         self.logger.log(stat_dict, model.iteration)
