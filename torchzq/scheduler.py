@@ -28,8 +28,11 @@ class _ScheduleFunction:
         )
         return self
 
+    def set_repr(self, repr):
+        self._repr = repr
+
     def __repr__(self):
-        return f"{type(self).__name__}(value={self()}, n={self.n})"
+        return self._repr
 
 
 class Cosine(_ScheduleFunction):
@@ -109,6 +112,7 @@ class Scheduler:
         x = eval(str(s))
         if not callable(x):
             x = Constant(x)
+        x.set_repr(s)
         self._functions.append(x)
         return x
 

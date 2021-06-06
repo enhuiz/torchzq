@@ -1,3 +1,4 @@
+import tqdm
 import time
 import yaml
 import sys
@@ -9,10 +10,10 @@ import random
 import torch
 import torch.nn as nn
 import signal
+import wandb
 from pathlib import Path
 from collections import defaultdict
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 from functools import partial
 from collections import defaultdict
 
@@ -21,7 +22,6 @@ import zouqi
 from .typing import Flag, Scheduled, _Scheduled
 from .saver import Saver
 from .scheduler import Scheduler
-from .pbar import ProgressBar
 from .utils import print_directory_tree
 from .interrupt import graceful_interrupt_handler
 
@@ -53,18 +53,18 @@ def delegate(delegate_cls, name):
 
 
 class Mode(str):
-    logger = immutable("logger")
     data_loader = immutable("data_loader")
 
 
 @delegate(Mode, "mode")
 class Runner:
+    args = immutable("args")
     model = immutable("model")
     saver = immutable("saver")
+    logger = immutable("logger")
     optimizers = immutable("optimizers")
     scheduler = immutable("scheduler")
     scaler = immutable("scaler")
-    args = immutable("args")
 
     def __init__(
         self,
@@ -74,12 +74,12 @@ class Runner:
         device: str = "cuda",
         strict_loading: bool = True,
         runs_root: Path = Path("runs"),
-        quiet: Flag = False,
         use_fp16: bool = False,
         ckpt: Path = None,
         lr: Scheduled = "1e-3",
         from_scratch: Flag = False,
         seed: int = 0,
+        wandb_project: str = "",
     ):
         self.modes = []
         random.seed(seed)
@@ -116,10 +116,6 @@ class Runner:
     @property
     def run_dir(self):
         return self.args.runs_root / self.name
-
-    @property
-    def logs_dir(self):
-        return self.run_dir / "logs" / self.mode
 
     @property
     def ckpt_dir(self):
@@ -198,8 +194,10 @@ class Runner:
             self.saver = Saver(self.ckpt_dir, args.strict_loading)
 
     def prepare_logger(self):
+        args = self.args
         if self.logger is None:
-            self.logger = SummaryWriter(self.logs_dir)
+            wandb.init(config=args, project=args.wandb_project)
+            self.logger = wandb
 
     def prepare_data_loader(self):
         # data_loader should be before the model
@@ -278,6 +276,7 @@ class Runner:
         stat_dict = {}
         for i in range(len(self.optimizers)):
             stat_dict.update(self.training_step(batch, i)[1])
+        stat_dict = {f"val_{k}": v for k, v in stat_dict.items()}
         return stat_dict
 
     def testing_step(self, batch, batch_idx: int) -> dict:
@@ -336,15 +335,13 @@ class Runner:
 
         args = self.args
         model = self.model
-        logger = self.logger
 
         while model.epoch < args.max_epochs:
             model.epoch += 1
             desc = f"Train: {model.epoch}/{args.max_epochs}"
-            pbar = ProgressBar(self.data_loader, args.quiet, desc=desc)
+            pbar = tqdm.tqdm(self.data_loader, desc=desc)
 
             def interrupt_callback(signum):
-                pbar.close()
                 print("Trying to gracefully shutdown ...")
                 self.saver.dump()
                 if signum == signal.SIGQUIT:
@@ -355,16 +352,11 @@ class Runner:
                 for batch in pbar:
                     try:
                         stat_dict = self.training_step_with_optimization(batch)
-                        pbar.update_line(0, f"iteration: {model.iteration}", "{v}")
-                        for key, val in stat_dict.items():
-                            pbar.update_line(key, val)
                         if model.iteration % args.log_every == 0:
-                            for key, val in stat_dict.items():
-                                logger.add_scalar(key, val, model.iteration)
-                            logger.flush()
+                            self.logger.log(stat_dict, model.iteration)
                     except RuntimeError as e:
                         if "out of memory" in str(e):
-                            pbar.update_line(0, "OOM! Skip batch.", "{v}")
+                            pbar.set_description("OOM! Skip batch.")
                             for p in model.parameters():
                                 if p.grad is not None:
                                     del p.grad  # free some memory
@@ -372,7 +364,6 @@ class Runner:
                             continue
                         else:
                             raise e
-                pbar.close()
                 self.saver.buffer(model, self.optimizers, self.scaler)
                 if model.epoch % args.save_every == 0:
                     self.saver.dump()
@@ -380,25 +371,18 @@ class Runner:
                     self.validate()
                     self.switch_mode("train")
 
-    def val_test_loop(self, desc, step, sanity_check=False):
-        args = self.args
+    def val_test_loop(self, desc, step_fn, sanity_check=False):
         model = self.model
         data_loader = self.data_loader
         if sanity_check:
             data_loader = [batch for batch, _ in zip(data_loader, range(3))]
-        pbar = ProgressBar(data_loader, args.quiet, desc=desc)
+        pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
         for index, batch in enumerate(pbar):
-            stat_dict = step(batch, index)
-            for key, val in (stat_dict or {}).items():
-                pbar.update_line(key, val)
-                if isinstance(val, numbers.Number):
-                    stats_dict[key].append(val)
-        for key, val in stats_dict.items():
-            mean = sum(val) / len(val)
-            self.logger.add_scalar(key, mean, model.epoch)
-            print(f"Average {key}: {mean:.4g}.")
-        self.logger.flush()
+            stat_dict = step_fn(batch, index)
+        stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
+        stat_dict["epoch"] = model.epoch
+        self.logger.log(stat_dict, model.iteration)
 
     @zouqi.command
     def train(
