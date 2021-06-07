@@ -185,7 +185,7 @@ class Runner:
     def create_optimizers(self):
         args = self.args
         optimizer = self.Optimizer(params=self.model.parameters(), lr=1)
-        args.lr.add_listeners(lambda lr: self.set_lr(optimizer, lr))
+        args.lr.add_listener(lambda lr: self.set_lr(optimizer, lr))
         return [optimizer]
 
     def prepare_saver(self):
@@ -289,7 +289,7 @@ class Runner:
         start_time = time.time()
 
         model.iteration += 1
-        self.scheduler.step(model.epoch, model.iteration)
+        self.scheduler.step(epoch=model.epoch, iteration=model.iteration)
 
         for optimizer_idx, optimizer in enumerate(self.optimizers):
             with self.autocast_if_use_fp16():

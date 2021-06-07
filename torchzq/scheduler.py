@@ -1,32 +1,21 @@
-import math
+import inspect
+from math import *
 
 
 class _ScheduleFunction:
-    def __init__(self, epochwise):
-        self.epochwise = epochwise
+    def __init__(self):
         self.listeners = []
-        self.n = 0
 
     def step(self, epoch, iteration):
-        if self.epochwise:
-            self.n = epoch
-        else:
-            self.n = iteration
+        value = self(epoch=epoch, iteration=iteration)
         for listener in self.listeners:
-            listener(self())
+            listener(value)
 
-    def add_listeners(self, listener):
+    def add_listener(self, listener):
         self.listeners.append(listener)
 
-    def __call__(self) -> int:
+    def __call__(self, epoch, iteration) -> int:
         raise NotImplementedError
-
-    def __deepcopy__(self, _):
-        print(
-            "==> Warning: you are deepcopying a scheduler, which is forbidden. "
-            "Shallow copy has been performed instead."
-        )
-        return self
 
     def set_repr(self, repr):
         self._repr = repr
@@ -34,74 +23,42 @@ class _ScheduleFunction:
     def __repr__(self):
         return self._repr
 
-
-class Cosine(_ScheduleFunction):
-    def __init__(self, start, stop, epochwise):
-        """https://www.tensorflow.org/api_docs/python/tf/compat/v1/train/cosine_decay
-        Args:
-            start: start
-            stop: end
-        """
-        super().__init__(epochwise)
-        self.start = start
-        self.stop = stop
-        assert 0 <= start < stop
-
-    def __call__(self):
-        pi = math.pi
-        cos = math.cos
-        start = self.start
-        stop = self.stop
-
-        if self.n < start:
-            return 1
-        if self.n > stop:
-            return 0
-
-        return max(0, 0.5 * (1 + cos(pi * (self.n - start) / (stop - start))))
-
-
-class Exponential(_ScheduleFunction):
-    def __init__(self, k, epochwise):
-        super().__init__(epochwise)
-        self.k = k
-        assert k > 0
-
-    def __call__(self):
-        return math.exp(-self.k * self.n)
+    def __deepcopy__(self, _):
+        msg = "Warning: Deepcopying a scheduler is forbidden. Shallow copy is performed instead."
+        print(msg)
+        return self
 
 
 class Constant(_ScheduleFunction):
     def __init__(self, c):
-        super().__init__(True)
+        super().__init__()
         self.c = c
 
-    def __call__(self):
+    def __call__(self, epoch, iteration):
         return self.c
 
 
 class Lambda(_ScheduleFunction):
-    def __init__(self, f, epochwise):
-        super().__init__(epochwise)
+    def __init__(self, f):
+        super().__init__()
         self.f = f
 
-    def __call__(self):
-        return self.f(self.n)
+    def __call__(self, epoch, iteration):
+        params = {p.name for p in inspect.signature(self.f).parameters.values()}
 
+        def make_kwargs(ks, v):
+            d = {}
+            for k in ks:
+                if k in params:
+                    d.setdefault(k, v)
+            return d
 
-class Logistic(_ScheduleFunction):
-    def __init__(self, k, start, upper, epochwise=True):
-        super().__init__(epochwise)
-        self.k = k
-        self.start = start
-        self.upper = upper
-        assert k > 0
-
-    def __call__(self):
-        k = self.k
-        start = self.start
-        upper = self.upper
-        return upper / (1 + math.exp(-k * (self.n - start)))
+        return self.f(
+            **(
+                make_kwargs(["e", "epoch"], epoch)
+                | make_kwargs(["i", "iteration"], iteration)
+            )
+        )
 
 
 class Scheduler:
