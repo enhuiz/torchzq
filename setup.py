@@ -5,7 +5,7 @@ with open("README.md", "r") as f:
 
 setup(
     name="torchzq",
-    python_requires=">=3.6.0",
+    python_requires=">=3.9.0",
     version="1.0.9.dev0",
     description="TorchZQ: A simple PyTorch experiment runner.",
     author="enhuiz",

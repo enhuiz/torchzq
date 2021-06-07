@@ -2,19 +2,21 @@ import inspect
 from math import *
 
 
-class _ScheduleFunction:
+class _ScheduledVariable:
     def __init__(self):
         self.listeners = []
 
     def step(self, epoch, iteration):
-        value = self(epoch=epoch, iteration=iteration)
+        self.epoch = epoch
+        self.iteration = iteration
+        value = self()
         for listener in self.listeners:
             listener(value)
 
     def add_listener(self, listener):
         self.listeners.append(listener)
 
-    def __call__(self, epoch, iteration) -> int:
+    def __call__(self) -> int:
         raise NotImplementedError
 
     def set_repr(self, repr):
@@ -29,21 +31,21 @@ class _ScheduleFunction:
         return self
 
 
-class Constant(_ScheduleFunction):
+class Constant(_ScheduledVariable):
     def __init__(self, c):
         super().__init__()
         self.c = c
 
-    def __call__(self, epoch, iteration):
+    def __call__(self):
         return self.c
 
 
-class Lambda(_ScheduleFunction):
+class Lambda(_ScheduledVariable):
     def __init__(self, f):
         super().__init__()
         self.f = f
 
-    def __call__(self, epoch, iteration):
+    def __call__(self):
         params = {p.name for p in inspect.signature(self.f).parameters.values()}
 
         def make_kwargs(ks, v):
@@ -53,12 +55,10 @@ class Lambda(_ScheduleFunction):
                     d.setdefault(k, v)
             return d
 
-        return self.f(
-            **(
-                make_kwargs(["e", "epoch"], epoch)
-                | make_kwargs(["i", "iteration"], iteration)
-            )
-        )
+        kwargs = make_kwargs(["e", "epoch"], self.epoch)
+        kwargs |= make_kwargs(["i", "iteration"], self.iteration)
+
+        return self.f(**kwargs)
 
 
 class Scheduler:
