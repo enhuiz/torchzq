@@ -4,7 +4,6 @@ import yaml
 import sys
 import os
 import shutil
-import numbers
 import numpy as np
 import random
 import torch
@@ -81,16 +80,16 @@ class Runner:
         seed: int = 0,
         wandb_project: str = "",
     ):
-        self.modes = []
+        self._modes = []
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
 
     @property
     def mode(self):
-        if len(self.modes) == 0:
+        if len(self._modes) == 0:
             raise RuntimeError('No mode has been set, call "self.switch_mode()" first.')
-        return self.modes[0]
+        return self._modes[0]
 
     @property
     def name(self):
@@ -120,10 +119,6 @@ class Runner:
     @property
     def ckpt_dir(self):
         return self.run_dir / "ckpts"
-
-    @property
-    def events(self):
-        return self.mode.events
 
     @property
     def autocast_if_use_fp16(self):
@@ -188,82 +183,81 @@ class Runner:
         args.lr.add_listener(lambda lr: self.set_lr(optimizer, lr))
         return [optimizer]
 
-    def prepare_saver(self):
+    def _prepare_logger(self):
         args = self.args
-        if self.saver is None:
-            self.saver = Saver(self.ckpt_dir, args.strict_loading)
+        wandb.init(config=args, project=args.wandb_project, group=self.name)
+        self.logger = wandb
 
-    def prepare_logger(self):
+    def _prepare_saver(self):
         args = self.args
-        if self.logger is None:
-            wandb.init(config=args, project=args.wandb_project, group=self.name)
-            self.logger = wandb
+        self.saver = Saver(self.ckpt_dir, args.strict_loading)
 
-    def prepare_data_loader(self):
-        # data_loader should be before the model
-        if self.data_loader is None:
-            self.data_loader = self.create_data_loader()
-
-    def prepare_scheduler(self):
+    def _prepare_scheduler(self):
         # scheduler should be before the model
-        if self.scheduler is None:
-            self.scheduler = self.create_scheduler()
+        self.scheduler = self.create_scheduler()
 
-    def prepare_model(self):
-        args = self.args
-        if self.model is None:
-            self.model = self.create_model()
-            self.model.to(args.device)
-            self.model.epoch = 0
-            self.model.iteration = 0
-            self.saver.load(self.ckpt, model=self.model)
-            self.scheduler.step(epoch=self.model.epoch, iteration=self.model.iteration)
+    def _prepare_data_loader(self):
+        # data_loader should be before the model
+        self.data_loader = self.create_data_loader()
 
-    def prepare_optimizer(self):
+    def _prepare_model(self):
         args = self.args
-        if self.optimizers is None:
-            self.optimizers = self.create_optimizers()
-            if len(self.optimizers) == 0:
-                raise ValueError("There should be at least 1 optimizer but get 0.")
-            for optimizer in self.optimizers:
-                for state in optimizer.state.values():
-                    for k, v in state.items():
-                        if torch.is_tensor(v):
-                            state[k] = v.to(args.device)
-            self.saver.load(self.ckpt, optimizers=self.optimizers)
+        self.model = self.create_model()
+        self.model.to(args.device)
+        self.model.epoch = 0
+        self.model.iteration = 0
+        self.saver.load(self.ckpt, model=self.model)
+        self.scheduler.step(epoch=self.model.epoch, iteration=self.model.iteration)
 
-    def prepare_scaler(self):
+    def _prepare_optimizers(self):
         args = self.args
-        if self.scaler is None and args.use_fp16:
+        self.optimizers = self.create_optimizers()
+        if len(self.optimizers) == 0:
+            raise ValueError("There should be at least 1 optimizer but get 0.")
+        for optimizer in self.optimizers:
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.to(args.device)
+        self.saver.load(self.ckpt, optimizers=self.optimizers)
+
+    def _prepare_scaler(self):
+        args = self.args
+        if args.use_fp16:
             self.scaler = torch.cuda.amp.GradScaler()
             self.saver.load(self.ckpt, scaler=self.scaler)
 
-    @staticmethod
-    def run_pipeline(*stages):
-        for stage in stages:
-            for func in stage:
-                func()
-
-    def prepare_all(self):
-        self.run_pipeline(
-            [self.prepare_saver, self.prepare_scheduler],
-            [self.prepare_data_loader],
-            [self.prepare_model],
-            [self.prepare_optimizer, self.prepare_scaler],
-            [self.prepare_logger],
-        )
+    def _run_preparations(self, stage_dict):
+        for name, prepare in stage_dict.items():
+            getattr(self, name) is not None or prepare()
 
     def switch_mode(self, name):
         """
         Switch running mode.
         """
-        # the first element in self.modes will be treated as the current mode
-        if name in self.modes:
-            i = self.modes.index(name)
-            self.modes[0], self.modes[i] = self.modes[i], self.modes[0]
+        # the first element in self._modes will be treated as the current mode
+        if name in self._modes:
+            i = self._modes.index(name)
+            self._modes[0], self._modes[i] = self._modes[i], self._modes[0]
         else:
-            self.modes.insert(0, Mode(name))
-            self.prepare_all()
+            self._modes.insert(0, Mode(name))
+            self._run_preparations(
+                # order matters
+                {
+                    # stage 1
+                    "logger": self._prepare_logger,
+                    # stage 2
+                    "saver": self._prepare_saver,
+                    "scheduler": self._prepare_scheduler,
+                    # stage 3
+                    "data_loader": self._prepare_data_loader,
+                    # stage 4
+                    "model": self._prepare_model,
+                    # stage 5
+                    "optimizers": self._prepare_optimizers,
+                    "scaler": self._prepare_scaler,
+                }
+            )
         if self.training:
             self.model.train()
         elif self.model is not None:
@@ -282,7 +276,7 @@ class Runner:
     def testing_step(self, batch, batch_idx: int) -> dict:
         raise NotImplementedError
 
-    def training_step_with_optimization(self, batch) -> dict:
+    def _training_step_with_optimization(self, batch) -> dict:
         args = self.args
         model = self.model
         stat_dict = {}
@@ -329,7 +323,7 @@ class Runner:
 
         return stat_dict
 
-    def training_loop(self):
+    def _training_loop(self):
         if not self.training:
             print("Warning: You are calling training loop in non-training mode!")
 
@@ -351,7 +345,7 @@ class Runner:
             with graceful_interrupt_handler(callback=interrupt_callback):
                 for batch in pbar:
                     try:
-                        stat_dict = self.training_step_with_optimization(batch)
+                        stat_dict = self._training_step_with_optimization(batch)
                         if model.iteration % args.log_every == 0:
                             self.logger.log(stat_dict, model.iteration)
                     except RuntimeError as e:
@@ -371,7 +365,7 @@ class Runner:
                     self.validate()
                     self.switch_mode("train")
 
-    def val_test_loop(self, desc, step_fn, sanity_check=False):
+    def _val_test_loop(self, desc, step_fn, sanity_check=False):
         model = self.model
         data_loader = self.data_loader
         if sanity_check:
@@ -406,18 +400,18 @@ class Runner:
             yaml.dump(vars(args), f)
 
         self.switch_mode("validate")
-        self.val_test_loop(
+        self._val_test_loop(
             "Validation loop sanity checking ...",
             self.validation_step,
             sanity_check=True,
         )
         self.switch_mode("train")
-        self.training_loop()
+        self._training_loop()
 
     @zouqi.command
     def validate(self):
         self.switch_mode("validate")
-        self.val_test_loop(
+        self._val_test_loop(
             f"Validating epoch {self.model.epoch} ...",
             self.validation_step,
         )
@@ -425,7 +419,7 @@ class Runner:
     @zouqi.command
     def test(self):
         self.switch_mode("test")
-        self.val_test_loop(
+        self._val_test_loop(
             f"Testing epoch {self.model.epoch} ...",
             self.testing_step,
         )
