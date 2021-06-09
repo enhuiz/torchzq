@@ -80,16 +80,16 @@ class Runner:
         seed: int = 0,
         wandb_project: str = "",
     ):
-        self._modes = []
+        self._cached_modes = []
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
 
     @property
     def mode(self):
-        if len(self._modes) == 0:
+        if len(self._cached_modes) == 0:
             raise RuntimeError('No mode has been set, call "self.switch_mode()" first.')
-        return self._modes[0]
+        return self._cached_modes[0]
 
     @property
     def name(self):
@@ -183,24 +183,24 @@ class Runner:
         args.lr.add_listener(lambda lr: self.set_lr(optimizer, lr))
         return [optimizer]
 
-    def _prepare_logger(self):
+    def prepare_logger(self):
         args = self.args
         wandb.init(config=args, project=args.wandb_project, group=self.name)
         self.logger = wandb
 
-    def _prepare_saver(self):
+    def prepare_saver(self):
         args = self.args
         self.saver = Saver(self.ckpt_dir, args.strict_loading)
 
-    def _prepare_scheduler(self):
+    def prepare_scheduler(self):
         # scheduler should be before the model
         self.scheduler = self.create_scheduler()
 
-    def _prepare_data_loader(self):
+    def prepare_data_loader(self):
         # data_loader should be before the model
         self.data_loader = self.create_data_loader()
 
-    def _prepare_model(self):
+    def prepare_model(self):
         args = self.args
         self.model = self.create_model()
         self.model.to(args.device)
@@ -209,7 +209,7 @@ class Runner:
         self.saver.load(self.ckpt, model=self.model)
         self.scheduler.step(epoch=self.model.epoch, iteration=self.model.iteration)
 
-    def _prepare_optimizers(self):
+    def prepare_optimizers(self):
         args = self.args
         self.optimizers = self.create_optimizers()
         if len(self.optimizers) == 0:
@@ -221,11 +221,14 @@ class Runner:
                         state[k] = v.to(args.device)
         self.saver.load(self.ckpt, optimizers=self.optimizers)
 
-    def _prepare_scaler(self):
+    def prepare_scaler(self):
         args = self.args
         if args.use_fp16:
             self.scaler = torch.cuda.amp.GradScaler()
             self.saver.load(self.ckpt, scaler=self.scaler)
+
+    def clear_cached_modes(self):
+        self._cached_modes.clear()
 
     def _run_preparations(self, stage_dict):
         for name, prepare in stage_dict.items():
@@ -235,27 +238,31 @@ class Runner:
         """
         Switch running mode.
         """
-        # the first element in self._modes will be treated as the current mode
-        if name in self._modes:
-            i = self._modes.index(name)
-            self._modes[0], self._modes[i] = self._modes[i], self._modes[0]
+        # the first element in self._cached_modes will be treated as the current mode
+        if name in self._cached_modes:
+            i = self._cached_modes.index(name)
+            self._cached_modes[0], self._cached_modes[i] = (
+                self._cached_modes[i],
+                self._cached_modes[0],
+            )
         else:
-            self._modes.insert(0, Mode(name))
+            # cache a new mode
+            self._cached_modes.insert(0, Mode(name))
             self._run_preparations(
                 # order matters
                 {
                     # stage 1
-                    "logger": self._prepare_logger,
+                    "logger": self.prepare_logger,
                     # stage 2
-                    "saver": self._prepare_saver,
-                    "scheduler": self._prepare_scheduler,
+                    "saver": self.prepare_saver,
+                    "scheduler": self.prepare_scheduler,
                     # stage 3
-                    "data_loader": self._prepare_data_loader,
+                    "data_loader": self.prepare_data_loader,
                     # stage 4
-                    "model": self._prepare_model,
+                    "model": self.prepare_model,
                     # stage 5
-                    "optimizers": self._prepare_optimizers,
-                    "scaler": self._prepare_scaler,
+                    "optimizers": self.prepare_optimizers,
+                    "scaler": self.prepare_scaler,
                 }
             )
         if self.training:
