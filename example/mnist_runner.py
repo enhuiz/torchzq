@@ -44,10 +44,10 @@ class Runner(torchzq.Runner):
     def create_model(self):
         return Net()
 
-    def create_dataset(self):
+    def create_dataset(self, mode):
         return datasets.MNIST(
             "../data",
-            train=self.training,
+            train=mode == "training",
             download=True,
             transform=transforms.Compose(
                 [

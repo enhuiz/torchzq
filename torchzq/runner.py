@@ -1,3 +1,4 @@
+import argparse
 import tqdm
 import time
 import yaml
@@ -13,57 +14,22 @@ import wandb
 from pathlib import Path
 from collections import defaultdict
 from torch.utils.data import DataLoader
-from functools import partial
+from functools import partial, cached_property
 from collections import defaultdict
 
 import zouqi
 
-from .typing import Flag, Scheduled, _Scheduled
+from .typing import Flag, Scheduled, _Scheduled, Optional, Literal, final
 from .saver import Saver
 from .scheduler import Scheduler
 from .utils import print_directory_tree
 from .interrupt import graceful_interrupt_handler
 
-
-def immutable(name):
-    def getter(self):
-        return getattr(self, "__" + name, None)
-
-    def setter(self, x):
-        assert getter(self) == None, "Immutable variable cannot be set twice!"
-        setattr(self, "__" + name, x)
-
-    return property(getter, setter)
+Mode = Literal["training", "validation", "testing"]
 
 
-def delegate(delegate_cls, name):
-    attrs = set(delegate_cls.__dict__.keys())
-
-    def wrapped(cls):
-        nonexist_attrs = attrs - set(cls.__dict__.keys())
-        for attr in nonexist_attrs:
-            getsrc = lambda self: getattr(self, name)
-            getter = lambda self, attr=attr: getattr(getsrc(self), attr)
-            setter = lambda self, x, attr=attr: setattr(getsrc(self), attr, x)
-            setattr(cls, attr, property(getter, setter))
-        return cls
-
-    return wrapped
-
-
-class Mode(str):
-    data_loader = immutable("data_loader")
-
-
-@delegate(Mode, "mode")
 class Runner:
-    args = immutable("args")
-    model = immutable("model")
-    saver = immutable("saver")
-    logger = immutable("logger")
-    optimizers = immutable("optimizers")
-    scheduler = immutable("scheduler")
-    scaler = immutable("scaler")
+    args: Optional[argparse.Namespace] = None
 
     def __init__(
         self,
@@ -85,23 +51,13 @@ class Runner:
         np.random.seed(seed)
         torch.manual_seed(seed)
 
-    @property
-    def mode(self):
-        if len(self._cached_modes) == 0:
-            raise RuntimeError('No mode has been set, call "self.switch_mode()" first.')
-        return self._cached_modes[0]
+    ##############
+    # Read-onlys #
+    ##############
 
     @property
     def name(self):
         return self.args.name
-
-    @property
-    def dataset(self):
-        return self.data_loader.dataset
-
-    @property
-    def training(self):
-        return self.mode == "train"
 
     @property
     def ckpt(self):
@@ -129,47 +85,113 @@ class Runner:
         return self.args.batch_size
 
     @property
-    def Dataset(self):
-        raise NotImplementedError
-
-    @property
     def Optimizer(self):
         return torch.optim.Adam
 
     @property
-    def DataLoader(self):
-        return partial(
-            DataLoader,
-            shuffle=self.training,
-            drop_last=self.training,
-        )
+    @final
+    def training_dataset(self):
+        return self.training_data_loader.dataset
 
-    @staticmethod
-    def set_lr(optimizer, lr):
-        for g in optimizer.param_groups:
-            g["lr"] = lr
+    @property
+    @final
+    def validation_dataset(self):
+        return self.validation_data_loader.dataset
 
-    @staticmethod
-    def get_lr(optimizer):
-        return optimizer.param_groups[0]["lr"]
+    @property
+    @final
+    def testing_dataset(self):
+        return self.testing_data_loader.dataset
 
-    def create_scheduler(self):
+    ########
+    # Lazy #
+    ########
+
+    @cached_property
+    def logger(self):
+        args = self.args
+        wandb.init(config=args, project=args.wandb_project, group=self.name)
+        return wandb
+
+    @cached_property
+    def saver(self):
+        return Saver(self.ckpt_dir, self.args.strict_loading)
+
+    @cached_property
+    def scheduler(self):
         scheduler = Scheduler()
         for k, v in list(vars(self.args).items()):
             if isinstance(v, _Scheduled):
                 setattr(self.args, k, scheduler.schedule(v))
         return scheduler
 
-    def create_dataset(self):
+    @cached_property
+    def training_data_loader(self):
+        return self.create_data_loader("training")
+
+    @cached_property
+    def validation_data_loader(self):
+        return self.create_data_loader("validation")
+
+    @cached_property
+    def testing_data_loader(self):
+        return self.create_data_loader("testing")
+
+    @cached_property
+    def sanity_check_data_loader(self):
+        return [batch for batch, _ in zip(self.validation_data_loader, range(3))]
+
+    @cached_property
+    def model(self):
+        args = self.args
+        model = self.create_model()
+        model.to(args.device)
+        model.epoch = 0
+        model.iteration = 0
+        self.saver.load(self.ckpt, model=model)
+        self.scheduler.step(epoch=model.epoch, iteration=model.iteration)
+        return model
+
+    @cached_property
+    def optimizers(self):
+        args = self.args
+        optimizers = self.create_optimizers()
+        if len(optimizers) == 0:
+            raise ValueError("There should be at least 1 optimizer but get 0.")
+        for optimizer in optimizers:
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.to(args.device)
+        self.saver.load(self.ckpt, optimizers=optimizers)
+        return optimizers
+
+    @cached_property
+    def scaler(self):
+        args = self.args
+        if args.use_fp16:
+            scaler = torch.cuda.amp.GradScaler()
+            self.saver.load(self.ckpt, scaler=scaler)
+        else:
+            scaler = None
+        return scaler
+
+    ############
+    # Creators #
+    ############
+
+    def create_dataset(self, mode: Mode):
         raise NotImplementedError
 
-    def create_data_loader(self):
+    def create_data_loader(self, mode: Mode):
         args = self.args
-        dataset = self.create_dataset()
-        data_loader = self.DataLoader(
+        dataset = self.create_dataset(mode)
+        data_loader = DataLoader(
             dataset=dataset,
             batch_size=self.batch_size,
             num_workers=args.nj,
+            shuffle=mode == "training",
+            drop_last=mode == "training",
         )
         print("Dataset size:", len(dataset))
         return data_loader
@@ -177,98 +199,21 @@ class Runner:
     def create_model(self):
         raise NotImplementedError
 
+    @staticmethod
+    def set_lr(optimizer, lr):
+        for g in optimizer.param_groups:
+            g["lr"] = lr
+
     def create_optimizers(self):
+        self.scheduler
         args = self.args
         optimizer = self.Optimizer(params=self.model.parameters(), lr=1)
         args.lr.add_listener(lambda lr: self.set_lr(optimizer, lr))
         return [optimizer]
 
-    def prepare_logger(self):
-        args = self.args
-        wandb.init(config=args, project=args.wandb_project, group=self.name)
-        self.logger = wandb
-
-    def prepare_saver(self):
-        args = self.args
-        self.saver = Saver(self.ckpt_dir, args.strict_loading)
-
-    def prepare_scheduler(self):
-        # scheduler should be before the model
-        self.scheduler = self.create_scheduler()
-
-    def prepare_data_loader(self):
-        # data_loader should be before the model
-        self.data_loader = self.create_data_loader()
-
-    def prepare_model(self):
-        args = self.args
-        self.model = self.create_model()
-        self.model.to(args.device)
-        self.model.epoch = 0
-        self.model.iteration = 0
-        self.saver.load(self.ckpt, model=self.model)
-        self.scheduler.step(epoch=self.model.epoch, iteration=self.model.iteration)
-
-    def prepare_optimizers(self):
-        args = self.args
-        self.optimizers = self.create_optimizers()
-        if len(self.optimizers) == 0:
-            raise ValueError("There should be at least 1 optimizer but get 0.")
-        for optimizer in self.optimizers:
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if torch.is_tensor(v):
-                        state[k] = v.to(args.device)
-        self.saver.load(self.ckpt, optimizers=self.optimizers)
-
-    def prepare_scaler(self):
-        args = self.args
-        if args.use_fp16:
-            self.scaler = torch.cuda.amp.GradScaler()
-            self.saver.load(self.ckpt, scaler=self.scaler)
-
-    def clear_cached_modes(self):
-        self._cached_modes.clear()
-
-    def _run_preparations(self, stage_dict):
-        for name, prepare in stage_dict.items():
-            getattr(self, name) is not None or prepare()
-
-    def switch_mode(self, name):
-        """
-        Switch running mode.
-        """
-        # the first element in self._cached_modes will be treated as the current mode
-        if name in self._cached_modes:
-            i = self._cached_modes.index(name)
-            self._cached_modes[0], self._cached_modes[i] = (
-                self._cached_modes[i],
-                self._cached_modes[0],
-            )
-        else:
-            # cache a new mode
-            self._cached_modes.insert(0, Mode(name))
-            self._run_preparations(
-                # order matters
-                {
-                    # stage 1
-                    "logger": self.prepare_logger,
-                    # stage 2
-                    "saver": self.prepare_saver,
-                    "scheduler": self.prepare_scheduler,
-                    # stage 3
-                    "data_loader": self.prepare_data_loader,
-                    # stage 4
-                    "model": self.prepare_model,
-                    # stage 5
-                    "optimizers": self.prepare_optimizers,
-                    "scaler": self.prepare_scaler,
-                }
-            )
-        if self.training:
-            self.model.train()
-        elif self.model is not None:
-            self.model.eval()
+    #########
+    # Steps #
+    #########
 
     def training_step(self, batch, optimizer_idx: int) -> tuple[torch.Tensor, dict]:
         raise NotImplementedError
@@ -330,17 +275,19 @@ class Runner:
 
         return stat_dict
 
-    def _training_loop(self):
-        if not self.training:
-            print("Warning: You are calling training loop in non-training mode!")
+    #########
+    # Loops #
+    #########
 
+    @final
+    def _training_loop(self):
         args = self.args
         model = self.model
 
         while model.epoch < args.max_epochs:
             model.epoch += 1
             desc = f"Train: {model.epoch}/{args.max_epochs}"
-            pbar = tqdm.tqdm(self.data_loader, desc=desc)
+            pbar = tqdm.tqdm(self.training_data_loader, desc=desc)
 
             def interrupt_callback(signum):
                 print("Trying to gracefully shutdown ...")
@@ -370,13 +317,11 @@ class Runner:
                     self.saver.dump()
                 if model.epoch % args.validate_every == 0:
                     self.validate()
-                    self.switch_mode("train")
+                    self.model.train()
 
-    def _val_test_loop(self, desc, step_fn, sanity_check=False):
+    @final
+    def _val_test_loop(self, desc, data_loader, step_fn):
         model = self.model
-        data_loader = self.data_loader
-        if sanity_check:
-            data_loader = [batch for batch, _ in zip(data_loader, range(3))]
         pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
         for index, batch in enumerate(pbar):
@@ -385,6 +330,10 @@ class Runner:
         stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
         stat_dict["epoch"] = model.epoch
         self.logger.log(stat_dict, model.iteration)
+
+    ############
+    # Commands #
+    ############
 
     @zouqi.command
     def train(
@@ -406,28 +355,26 @@ class Runner:
         with open(self.run_dir / f"config-{time_str}.yml", "w") as f:
             yaml.dump(vars(args), f)
 
-        self.switch_mode("validate")
         self._val_test_loop(
-            "Validation loop sanity checking ...",
+            "Validation sanity checking ...",
+            self.sanity_check_data_loader,
             self.validation_step,
-            sanity_check=True,
         )
-        self.switch_mode("train")
         self._training_loop()
 
     @zouqi.command
     def validate(self):
-        self.switch_mode("validate")
         self._val_test_loop(
             f"Validating epoch {self.model.epoch} ...",
+            self.validation_data_loader,
             self.validation_step,
         )
 
     @zouqi.command
     def test(self):
-        self.switch_mode("test")
         self._val_test_loop(
             f"Testing epoch {self.model.epoch} ...",
+            self.testing_data_loader,
             self.testing_step,
         )
 
