@@ -282,7 +282,7 @@ class Runner:
     @final
     def _training_loop(self):
         args = self.args
-        model = self.model
+        model = self.model.train()
 
         while model.epoch < args.max_epochs:
             model.epoch += 1
@@ -317,11 +317,11 @@ class Runner:
                     self.saver.dump()
                 if model.epoch % args.validate_every == 0:
                     self.validate()
-                    self.model.train()
+                    model.train()
 
     @final
     def _val_test_loop(self, desc, data_loader, step_fn):
-        model = self.model
+        model = self.model.eval()
         pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
         for index, batch in enumerate(pbar):
