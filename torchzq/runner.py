@@ -89,19 +89,8 @@ class Runner:
         return torch.optim.Adam
 
     @property
-    @final
-    def training_dataset(self):
-        return self.training_data_loader.dataset
-
-    @property
-    @final
-    def validation_dataset(self):
-        return self.validation_data_loader.dataset
-
-    @property
-    @final
-    def testing_dataset(self):
-        return self.testing_data_loader.dataset
+    def DataLoader(self):
+        return DataLoader
 
     ########
     # Lazy #
@@ -186,7 +175,7 @@ class Runner:
     def create_data_loader(self, mode: Mode):
         args = self.args
         dataset = self.create_dataset(mode)
-        data_loader = DataLoader(
+        data_loader = self.DataLoader(
             dataset=dataset,
             batch_size=self.batch_size,
             num_workers=args.nj,
@@ -279,8 +268,7 @@ class Runner:
     # Loops #
     #########
 
-    @final
-    def _training_loop(self):
+    def training_loop(self):
         args = self.args
         model = self.model.train()
 
@@ -319,8 +307,7 @@ class Runner:
                     self.validate()
                     model.train()
 
-    @final
-    def _val_test_loop(self, desc, data_loader, step_fn):
+    def val_test_loop(self, desc, data_loader, step_fn):
         model = self.model.eval()
         pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
@@ -355,16 +342,16 @@ class Runner:
         with open(self.run_dir / f"config-{time_str}.yml", "w") as f:
             yaml.dump(vars(args), f)
 
-        self._val_test_loop(
+        self.val_test_loop(
             "Validation sanity checking ...",
             self.sanity_check_data_loader,
             self.validation_step,
         )
-        self._training_loop()
+        self.training_loop()
 
     @zouqi.command
     def validate(self):
-        self._val_test_loop(
+        self.val_test_loop(
             f"Validating epoch {self.model.epoch} ...",
             self.validation_data_loader,
             self.validation_step,
@@ -372,7 +359,7 @@ class Runner:
 
     @zouqi.command
     def test(self):
-        self._val_test_loop(
+        self.val_test_loop(
             f"Testing epoch {self.model.epoch} ...",
             self.testing_data_loader,
             self.testing_step,
