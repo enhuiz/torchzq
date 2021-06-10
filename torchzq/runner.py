@@ -133,12 +133,14 @@ class Runner:
     @cached_property
     def model(self):
         args = self.args
+        saver = self.saver
+        scheduler = self.scheduler
         model = self.create_model()
         model.to(args.device)
         model.epoch = 0
         model.iteration = 0
-        self.saver.load(self.ckpt, model=model)
-        self.scheduler.step(epoch=model.epoch, iteration=model.iteration)
+        saver.load(self.ckpt, model=model)
+        scheduler.step(epoch=model.epoch, iteration=model.iteration)
         return model
 
     @cached_property
