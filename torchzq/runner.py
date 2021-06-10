@@ -19,7 +19,7 @@ from collections import defaultdict
 
 import zouqi
 
-from .typing import Flag, Scheduled, _Scheduled, Optional, Literal, final
+from .typing import Flag, Scheduled, _Scheduled, Optional, Literal
 from .saver import Saver
 from .scheduler import Scheduler
 from .utils import print_directory_tree
