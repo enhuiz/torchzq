@@ -97,19 +97,22 @@ if __name__ == "__main__":
 **Training**
 
 ```
-$ tzq example/config/mnist.yml train
+tzq example/config/mnist.yml train
 ```
 
 **Testing**
 
 ```
-$ tzq example/config/mnist.yml test
+tzq example/config/mnist.yml test
 ```
 
-**TensorBoard**
+**Weights & Biases**
+
+Before you run, login [Weights & Biases](https://docs.wandb.ai/quickstart) first.
 
 ```
-$ tensorboard --logdir runs
+pip install wandb # install weight & bias client
+wandb login       # login
 ```
 
 ## Supported Features
@@ -118,5 +121,5 @@ $ tensorboard --logdir runs
 - [x] Logging
 - [x] Gradient accumulation
 - [x] Configuration file
-- [x] TensorBoard
+- [x] Weights & Biases
 - [x] FP16
