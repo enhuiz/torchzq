@@ -16,6 +16,7 @@ from collections import defaultdict
 from torch.utils.data import DataLoader
 from functools import partial, cached_property
 from collections import defaultdict
+from itertools import islice
 
 import zouqi
 
@@ -81,16 +82,27 @@ class Runner:
         return partial(torch.cuda.amp.autocast, enabled=self.args.use_fp16)
 
     @property
-    def batch_size(self):
-        return self.args.batch_size
-
-    @property
     def Optimizer(self):
         return torch.optim.Adam
 
     @property
     def DataLoader(self):
         return DataLoader
+
+    ############
+    # Settable #
+    ############
+
+    @property
+    def batch(self):
+        return getattr(self, "_batch", None)
+
+    @batch.setter
+    def batch(self, value):
+        setattr(self, "_batch", self.prepare_batch(value))
+
+    def prepare_batch(self, batch):
+        return batch
 
     ########
     # Lazy #
@@ -128,7 +140,7 @@ class Runner:
 
     @cached_property
     def sanity_check_data_loader(self):
-        return [batch for batch, _ in zip(self.validation_data_loader, range(3))]
+        return list(islice(self.validation_data_loader, 3))
 
     @cached_property
     def model(self):
@@ -179,7 +191,7 @@ class Runner:
         dataset = self.create_dataset(mode)
         data_loader = self.DataLoader(
             dataset=dataset,
-            batch_size=self.batch_size,
+            batch_size=args.batch_size,
             num_workers=args.nj,
             shuffle=mode == "training",
             drop_last=mode == "training",
@@ -219,7 +231,7 @@ class Runner:
     def testing_step(self, batch, batch_idx: int) -> dict:
         raise NotImplementedError
 
-    def _training_step_with_optimization(self, batch) -> dict:
+    def training_step_with_optimization(self, batch) -> dict:
         args = self.args
         model = self.model
         stat_dict = {}
@@ -287,9 +299,9 @@ class Runner:
                 sys.exit(0)
 
             with graceful_interrupt_handler(callback=interrupt_callback):
-                for batch in pbar:
+                for self.batch in pbar:
                     try:
-                        stat_dict = self._training_step_with_optimization(batch)
+                        stat_dict = self.training_step_with_optimization(self.batch)
                         if model.iteration % args.log_every == 0:
                             self.logger.log(stat_dict, model.iteration)
                     except RuntimeError as e:
@@ -313,8 +325,8 @@ class Runner:
         model = self.model.eval()
         pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
-        for index, batch in enumerate(pbar):
-            for k, v in step_fn(batch, index).items():
+        for index, self.batch in enumerate(pbar):
+            for k, v in step_fn(self.batch, index).items():
                 stats_dict[k].append(v)
         stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
         stat_dict["epoch"] = model.epoch

@@ -64,13 +64,13 @@ class Runner(torchzq.Runner):
         return x, y
 
     def training_step(self, batch, optimizer_index):
-        x, y = self.prepare_batch(batch)
+        x, y = batch
         loss = F.nll_loss(self.model(x), y)
         return loss, {"nll_loss": loss.item()}
 
     @torch.no_grad()
     def testing_step(self, batch, batch_index):
-        x, y = self.prepare_batch(batch)
+        x, y = batch
         y_ = self.model(x).argmax(dim=-1)
         return {"accuracy": (y_ == y).float().mean().item()}
 
