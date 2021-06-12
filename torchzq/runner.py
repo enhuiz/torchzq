@@ -242,13 +242,9 @@ class Runner:
 
         for optimizer_idx, optimizer in enumerate(self.optimizers):
             with self.autocast_if_use_fp16():
-                outputs = self.training_step(batch, optimizer_idx)
+                loss, stat_dict_i = self.training_step(batch, optimizer_idx)
 
-            if isinstance(outputs, torch.Tensor):
-                loss = outputs
-            else:
-                loss = outputs[0]
-                stat_dict.update(outputs[1])
+            stat_dict.update(stat_dict_i)
 
             if args.use_fp16:
                 self.scaler.scale(loss / args.update_every).backward()
