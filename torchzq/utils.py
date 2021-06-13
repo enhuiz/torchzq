@@ -14,3 +14,13 @@ def print_directory_tree(root: Path, prefix: str = ""):
                 print_directory_tree(path, base + "├── ")
             else:
                 print_directory_tree(paths[-1], base + "└── ")
+
+
+def default_tuple(x, default):
+    if not isinstance(x, tuple):
+        x = [x]
+    else:
+        x = list(x)
+    for i in range(len(default) - len(x), len(default)):
+        x.append(default[i])
+    return tuple(x)

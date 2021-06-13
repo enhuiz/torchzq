@@ -23,8 +23,8 @@ import zouqi
 from .typing import Flag, Scheduled, _Scheduled, Optional, Literal
 from .saver import Saver
 from .scheduler import Scheduler
-from .utils import print_directory_tree
 from .interrupt import graceful_interrupt_handler
+from .utils import print_directory_tree, default_tuple
 
 Mode = Literal["training", "validation", "testing"]
 
@@ -224,7 +224,8 @@ class Runner:
     def validation_step(self, batch, batch_idx: int) -> dict:
         stat_dict = {}
         for i in range(len(self.optimizers)):
-            stat_dict.update(self.training_step(batch, i)[1])
+            outputs = default_tuple(self.training_step(batch, i), [None, {}])
+            stat_dict.update(outputs[1])
         stat_dict = {f"val_{k}": v for k, v in stat_dict.items()}
         return stat_dict
 
@@ -240,11 +241,12 @@ class Runner:
         model.iteration += 1
         self.scheduler.step(epoch=model.epoch, iteration=model.iteration)
 
-        for optimizer_idx, optimizer in enumerate(self.optimizers):
+        for i, optimizer in enumerate(self.optimizers):
             with self.autocast_if_use_fp16():
-                loss, stat_dict_i = self.training_step(batch, optimizer_idx)
+                outputs = default_tuple(self.training_step(batch, i), [None, {}])
 
-            stat_dict.update(stat_dict_i)
+            loss = outputs[0]
+            stat_dict.update(outputs[1])
 
             if args.use_fp16:
                 self.scaler.scale(loss / args.update_every).backward()
@@ -260,7 +262,7 @@ class Runner:
                     args.grad_clip_thres or 1e9,
                 )
 
-                stat_dict[f"grad_norm_{optimizer_idx}"] = grad_norm.item()
+                stat_dict[f"grad_norm_{i}"] = grad_norm.item()
 
                 if args.use_fp16:
                     self.scaler.step(optimizer)
@@ -322,11 +324,13 @@ class Runner:
         pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
         for index, self.batch in enumerate(pbar):
-            for k, v in step_fn(self.batch, index).items():
+            outputs = default_tuple(step_fn(self.batch, index), [{}])
+            for k, v in outputs[0].items():
                 stats_dict[k].append(v)
-        stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
-        stat_dict["epoch"] = model.epoch
-        self.logger.log(stat_dict, model.iteration)
+        if stats_dict:
+            stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
+            stat_dict["epoch"] = model.epoch
+            self.logger.log(stat_dict, model.iteration)
 
     ############
     # Commands #
