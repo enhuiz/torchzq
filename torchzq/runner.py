@@ -318,6 +318,7 @@ class Runner:
                 if model.epoch % args.validate_every == 0:
                     self.validate()
                     model.train()
+        self.saver.dump()
 
     def val_test_loop(self, desc, data_loader, step_fn):
         model = self.model.eval()
