@@ -327,10 +327,11 @@ class Runner:
             outputs = default_tuple(step_fn(self.batch, index), [{}])
             for k, v in outputs[0].items():
                 stats_dict[k].append(v)
-        if stats_dict:
-            stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
+        stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
+        if stat_dict:
             stat_dict["epoch"] = model.epoch
             self.logger.log(stat_dict, model.iteration)
+        return stat_dict
 
     ############
     # Commands #
@@ -361,11 +362,12 @@ class Runner:
             self.sanity_check_data_loader,
             self.validation_step,
         )
-        self.training_loop()
+
+        return self.training_loop()
 
     @zouqi.command
     def validate(self):
-        self.val_test_loop(
+        return self.val_test_loop(
             f"Validating epoch {self.model.epoch} ...",
             self.validation_data_loader,
             self.validation_step,
@@ -373,7 +375,7 @@ class Runner:
 
     @zouqi.command
     def test(self):
-        self.val_test_loop(
+        return self.val_test_loop(
             f"Testing epoch {self.model.epoch} ...",
             self.testing_data_loader,
             self.testing_step,
