@@ -14,7 +14,7 @@ def main():
     runner = data["runner"]
     del data["runner"]
     if "name" not in data and "--name" not in manual_argv:
-        rpath = args.yaml.relative_to(".")
+        rpath = args.yaml.relative_to(".").with_suffix("")
         if str(rpath).startswith("..") or len(rpath.parts) < 2:
             raise ValueError(
                 f"Fail to generate a proper name for {args.yaml}. "
