@@ -16,13 +16,14 @@ setup(
     scripts=["tzq"],
     install_requires=[
         "torch",
-        "zouqi==1.0.8",
+        "zouqi==1.0.9.dev0",
         "pyyaml",
         "tqdm",
         "pandas",
         "torchvision",
         "natsort",
         "deprecated",
+        "wandb",
     ],
     url="https://github.com/enhuiz/torchzq",
 )
