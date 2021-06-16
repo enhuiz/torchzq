@@ -1,4 +1,5 @@
 import inspect
+from types import LambdaType
 from math import *
 
 
@@ -67,7 +68,9 @@ class Scheduler:
 
     def schedule(self, s):
         x = eval(str(s))
-        if not callable(x):
+        if isinstance(x, LambdaType):
+            x = Lambda(x)
+        elif not callable(x):
             x = Constant(x)
         x.set_repr(s)
         self._functions.append(x)
