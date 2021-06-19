@@ -29,20 +29,21 @@ def default_tuple(x, default):
     return tuple(x)
 
 
-class EarlyStop(nn.Module):
-    def __init__(self, patience):
+class Monitor(nn.Module):
+    def __init__(self, *callbacks):
         super().__init__()
-        self.patience = patience
+        self.callbacks = callbacks
         self.register_buffer("count", torch.zeros([]))
         self.register_buffer("minima", torch.full([], np.inf))
 
     def forward(self, x):
         if x >= self.minima:
             self.count += 1
+            for callback in self.callbacks:
+                callback(self.count)
         else:
             self.count = torch.zeros_like(self.count)
         self.minima = torch.minimum(self.minima, x * torch.ones([]))
-        return (self.count >= self.patience).item()
 
     def __str__(self):
-        return f"EarlyStop(count={self.count:.4g}, minima={self.minima:.4g})"
+        return f"Monitor(count={self.count:.4g}, minima={self.minima:.4g})"
