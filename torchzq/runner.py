@@ -25,6 +25,7 @@ from .saver import Saver
 from .scheduler import Scheduler
 from .interrupt import graceful_interrupt_handler
 from .utils import print_directory_tree, default_tuple
+from .metric import Metrics
 
 Mode = Literal["training", "validation", "testing"]
 
@@ -143,14 +144,19 @@ class Runner:
         return list(islice(self.validation_data_loader, 3))
 
     @cached_property
+    def metrics(self):
+        return Metrics()
+
+    @cached_property
     def model(self):
         args = self.args
         saver = self.saver
         scheduler = self.scheduler
         model = self.create_model()
-        model.to(args.device)
+        model.metrics = self.metrics
         model.epoch = 0
         model.iteration = 0
+        model.to(args.device)
         saver.load(self.ckpt, model=model)
         scheduler.step(epoch=model.epoch, iteration=model.iteration)
         return model
@@ -207,11 +213,15 @@ class Runner:
         for g in optimizer.param_groups:
             g["lr"] = lr
 
+    @property
+    def lr_coef(self):
+        return 1
+
     def create_optimizers(self):
         self.scheduler
         args = self.args
         optimizer = self.Optimizer(params=self.model.parameters(), lr=1)
-        args.lr.add_listener(lambda lr: self.set_lr(optimizer, lr))
+        args.lr.add_listener(lambda lr: self.set_lr(optimizer, self.lr_coef * lr))
         return [optimizer]
 
     #########
@@ -246,7 +256,10 @@ class Runner:
                 outputs = default_tuple(self.training_step(batch, i), [None, {}])
 
             loss = outputs[0]
+
             stat_dict.update(outputs[1])
+            if "loss" not in stat_dict:
+                stat_dict["loss"] = loss.item()
 
             if args.use_fp16:
                 self.scaler.scale(loss / args.update_every).backward()
@@ -283,6 +296,7 @@ class Runner:
     def training_loop(self):
         args = self.args
         model = self.model.train()
+        logger = self.logger
 
         while model.epoch < args.max_epochs:
             model.epoch += 1
@@ -301,7 +315,7 @@ class Runner:
                     try:
                         stat_dict = self.training_step_with_optimization(self.batch)
                         if model.iteration % args.log_every == 0:
-                            self.logger.log(stat_dict, model.iteration)
+                            logger.log(stat_dict, model.iteration)
                     except RuntimeError as e:
                         if "out of memory" in str(e):
                             pbar.set_description("OOM! Skip batch.")
@@ -316,7 +330,10 @@ class Runner:
                 if model.epoch % args.save_every == 0:
                     self.saver.dump()
                 if model.epoch % args.validate_every == 0:
-                    self.validate()
+                    val_stat_dict = self.validate()
+                    self.metrics(val_stat_dict)
+                    log_dict = {"metrics": logger.Table(self.metrics.to_dataframe())}
+                    logger.log(log_dict, model.iteration)
                     model.train()
         self.saver.dump()
 
@@ -358,11 +375,16 @@ class Runner:
         with open(self.run_dir / f"config-{time_str}.yml", "w") as f:
             yaml.dump(vars(args), f)
 
-        self.val_test_loop(
+        sanity_stat_dict = self.val_test_loop(
             "Validation sanity checking ...",
             self.sanity_check_data_loader,
             self.validation_step,
         )
+
+        # sanity check for metrics, state_dict will be backed up and restored
+        state_dict = self.metrics.state_dict()
+        self.metrics(sanity_stat_dict)
+        self.metrics.load_state_dict(state_dict)
 
         return self.training_loop()
 
