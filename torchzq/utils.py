@@ -1,3 +1,4 @@
+import torch
 from pathlib import Path
 from natsort import natsorted
 
@@ -10,7 +11,7 @@ class ItemProperty:
         return getattr(obj, self.private_name).item()
 
     def __set__(self, obj, value):
-        value = getattr(obj, self.private_name) * 0 + value
+        value = torch.full_like(getattr(obj, self.private_name), value)
         setattr(obj, self.private_name, value)
 
 
