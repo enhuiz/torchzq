@@ -7,9 +7,9 @@ class _ScheduledVariable:
     def __init__(self):
         self.listeners = []
 
-    def step(self, epoch, iteration):
-        self.epoch = epoch
-        self.iteration = iteration
+    def step(self, current_epoch, global_step):
+        self.current_epoch = current_epoch
+        self.global_step = global_step
         value = self()
         for listener in self.listeners:
             listener(value)
@@ -56,8 +56,8 @@ class Lambda(_ScheduledVariable):
                     d.setdefault(k, v)
             return d
 
-        kwargs = make_kwargs(["e", "epoch"], self.epoch)
-        kwargs |= make_kwargs(["i", "iteration"], self.iteration)
+        kwargs = make_kwargs(["e", "epoch", "current_epoch"], self.current_epoch)
+        kwargs |= make_kwargs(["i", "step", "global_step"], self.global_step)
 
         return self.f(**kwargs)
 
@@ -76,6 +76,6 @@ class Scheduler:
         self._functions.append(x)
         return x
 
-    def step(self, epoch, iteration):
+    def step(self, current_epoch, global_step):
         for function in self._functions:
-            function.step(epoch, iteration)
+            function.step(current_epoch, global_step)

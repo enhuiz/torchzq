@@ -26,8 +26,21 @@ from .scheduler import Scheduler
 from .interrupt import graceful_interrupt_handler
 from .utils import print_directory_tree, default_tuple
 from .metric import Metrics
+from .utils import ItemProperty
 
 Mode = Literal["training", "validation", "testing"]
+
+
+class State(nn.Module):
+    backward_counter = ItemProperty()
+    global_step = ItemProperty()
+    current_epoch = ItemProperty()
+
+    def __init__(self):
+        super().__init__()
+        self.register_buffer("_backward_counter", torch.zeros([]).long())
+        self.register_buffer("_global_step", torch.zeros([]).long())
+        self.register_buffer("_current_epoch", torch.zeros([]).long())
 
 
 class Runner:
@@ -39,7 +52,7 @@ class Runner:
         batch_size: int = 32,
         nj: int = min(os.cpu_count(), 12),
         device: str = "cuda",
-        strict_loading: bool = True,
+        strict_loading: bool = False,
         runs_root: Path = Path("runs"),
         use_fp16: bool = False,
         ckpt: Path = None,
@@ -81,6 +94,22 @@ class Runner:
     @property
     def autocast_if_use_fp16(self):
         return partial(torch.cuda.amp.autocast, enabled=self.args.use_fp16)
+
+    @property
+    def state(self):
+        return self.model.state
+
+    @property
+    def backward_counter(self):
+        return self.state.backward_counter
+
+    @property
+    def global_step(self):
+        return self.state.global_step
+
+    @property
+    def current_epoch(self):
+        return self.state.current_epoch
 
     @property
     def Optimizer(self):
@@ -145,7 +174,7 @@ class Runner:
 
     @cached_property
     def metrics(self):
-        return Metrics()
+        return self.create_metrics()
 
     @cached_property
     def model(self):
@@ -153,12 +182,14 @@ class Runner:
         saver = self.saver
         scheduler = self.scheduler
         model = self.create_model()
-        model.metrics = self.metrics
-        model.epoch = 0
-        model.iteration = 0
         model.to(args.device)
+        model.metrics = self.metrics
+        model.state = State()
         saver.load(self.ckpt, model=model)
-        scheduler.step(epoch=model.epoch, iteration=model.iteration)
+        scheduler.step(
+            current_epoch=model.state.current_epoch,
+            global_step=model.state.global_step,
+        )
         return model
 
     @cached_property
@@ -168,10 +199,10 @@ class Runner:
         if len(optimizers) == 0:
             raise ValueError("There should be at least 1 optimizer but get 0.")
         for optimizer in optimizers:
-            for state in optimizer.state.values():
-                for k, v in state.items():
+            for d in optimizer.state.values():
+                for k, v in d.items():
                     if torch.is_tensor(v):
-                        state[k] = v.to(args.device)
+                        d[k] = v.to(args.device)
         self.saver.load(self.ckpt, optimizers=optimizers)
         return optimizers
 
@@ -205,6 +236,9 @@ class Runner:
         print("Dataset size:", len(dataset))
         return data_loader
 
+    def create_metrics(self):
+        return Metrics()
+
     def create_model(self):
         raise NotImplementedError
 
@@ -231,32 +265,27 @@ class Runner:
     def training_step(self, batch, optimizer_idx: int) -> tuple[torch.Tensor, dict]:
         raise NotImplementedError
 
-    def validation_step(self, batch, batch_idx: int) -> dict:
-        stat_dict = {}
-        for i in range(len(self.optimizers)):
-            outputs = default_tuple(self.training_step(batch, i), [None, {}])
-            stat_dict.update(outputs[1])
-        stat_dict = {f"val_{k}": v for k, v in stat_dict.items()}
-        return stat_dict
-
-    def testing_step(self, batch, batch_idx: int) -> dict:
-        raise NotImplementedError
-
     def training_step_with_optimization(self, batch) -> dict:
         args = self.args
         model = self.model
+        state = self.state
+
         stat_dict = {}
         start_time = time.time()
 
-        model.iteration += 1
-        self.scheduler.step(epoch=model.epoch, iteration=model.iteration)
+        state.backward_counter += 1
+        state.global_step += self.backward_counter % args.update_every == 0
+
+        self.scheduler.step(
+            current_epoch=self.current_epoch,
+            global_step=self.global_step,
+        )
 
         for i, optimizer in enumerate(self.optimizers):
             with self.autocast_if_use_fp16():
                 outputs = default_tuple(self.training_step(batch, i), [None, {}])
 
             loss = outputs[0]
-
             stat_dict.update(outputs[1])
             if "loss" not in stat_dict:
                 stat_dict["loss"] = loss.item()
@@ -266,12 +295,12 @@ class Runner:
             else:
                 (loss / args.update_every).backward()
 
-            if model.iteration % args.update_every == 0:
+            if self.backward_counter % args.update_every == 0:
                 if args.use_fp16:
                     self.scaler.unscale_(optimizer)
 
                 grad_norm = nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
+                    model.parameters(),
                     args.grad_clip_thres or 1e9,
                 )
 
@@ -289,6 +318,20 @@ class Runner:
 
         return stat_dict
 
+    def validation_step(self, batch, batch_idx: int) -> dict:
+        stat_dict = {}
+        for i in range(len(self.optimizers)):
+            outputs = default_tuple(self.training_step(batch, i), [None, {}])
+            loss = outputs[0]
+            stat_dict.update(outputs[1])
+            if "loss" not in stat_dict:
+                stat_dict["loss"] = loss.item()
+        stat_dict = {f"val_{k}": v for k, v in stat_dict.items()}
+        return stat_dict
+
+    def testing_step(self, batch, batch_idx: int) -> dict:
+        raise NotImplementedError
+
     #########
     # Loops #
     #########
@@ -296,11 +339,12 @@ class Runner:
     def training_loop(self):
         args = self.args
         model = self.model.train()
+        state = self.state
         logger = self.logger
 
-        while model.epoch < args.max_epochs:
-            model.epoch += 1
-            desc = f"Train: {model.epoch}/{args.max_epochs}"
+        while state.current_epoch < args.max_epochs:
+            state.current_epoch += 1
+            desc = f"Train: {self.current_epoch}/{args.max_epochs}"
             pbar = tqdm.tqdm(self.training_data_loader, desc=desc)
 
             def interrupt_callback(signum):
@@ -314,8 +358,8 @@ class Runner:
                 for self.batch in pbar:
                     try:
                         stat_dict = self.training_step_with_optimization(self.batch)
-                        if model.iteration % args.log_every == 0:
-                            logger.log(stat_dict, model.iteration)
+                        if self.global_step % args.log_every == 0:
+                            logger.log(stat_dict, self.global_step)
                     except RuntimeError as e:
                         if "out of memory" in str(e):
                             pbar.set_description("OOM! Skip batch.")
@@ -327,19 +371,19 @@ class Runner:
                         else:
                             raise e
                 self.saver.buffer(model, self.optimizers, self.scaler)
-                if model.epoch % args.save_every == 0:
+                if self.current_epoch % args.save_every == 0:
                     self.saver.dump()
-                if model.epoch % args.validate_every == 0:
+                if self.current_epoch % args.validate_every == 0:
                     val_stat_dict = self.validate()
                     self.metrics(val_stat_dict)
                     log_dict = self.metrics.to_dict()
-                    log_dict["epoch"] = model.epoch
-                    logger.log(log_dict, model.iteration)
+                    log_dict["epoch"] = self.current_epoch
+                    logger.log(log_dict, self.global_step)
                     model.train()
         self.saver.dump()
 
     def val_test_loop(self, desc, data_loader, step_fn):
-        model = self.model.eval()
+        self.model.eval()
         pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
         for index, self.batch in enumerate(pbar):
@@ -348,8 +392,8 @@ class Runner:
                 stats_dict[k].append(v)
         stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
         if stat_dict:
-            stat_dict["epoch"] = model.epoch
-            self.logger.log(stat_dict, model.iteration)
+            stat_dict["epoch"] = self.current_epoch
+            self.logger.log(stat_dict, self.global_step)
         return stat_dict
 
     ############
@@ -392,7 +436,7 @@ class Runner:
     @zouqi.command
     def validate(self):
         return self.val_test_loop(
-            f"Validating epoch {self.model.epoch} ...",
+            f"Validating current_epoch {self.current_epoch} ...",
             self.validation_data_loader,
             self.validation_step,
         )
@@ -400,7 +444,7 @@ class Runner:
     @zouqi.command
     def test(self):
         return self.val_test_loop(
-            f"Testing epoch {self.model.epoch} ...",
+            f"Testing current_epoch {self.current_epoch} ...",
             self.testing_data_loader,
             self.testing_step,
         )

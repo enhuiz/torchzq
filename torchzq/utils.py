@@ -2,6 +2,18 @@ from pathlib import Path
 from natsort import natsorted
 
 
+class ItemProperty:
+    def __set_name__(self, owner, name):
+        self.private_name = "_" + name
+
+    def __get__(self, obj, objtype=None):
+        return getattr(obj, self.private_name).item()
+
+    def __set__(self, obj, value):
+        value = getattr(obj, self.private_name) * 0 + value
+        setattr(obj, self.private_name, value)
+
+
 def print_directory_tree(root: Path, prefix: str = ""):
     if not root.exists():
         return
