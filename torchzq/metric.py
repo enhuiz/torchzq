@@ -45,5 +45,5 @@ class Metrics(nn.ModuleDict):
                 raise KeyError(f"Metric {name} is not found in the stat_dict.")
             metric(stat_dict[name])
 
-    def to_dataframe(self):
-        return pd.DataFrame([{"name": n} | m.to_dict() for n, m in self.items()])
+    def to_dict(self):
+        return {f"{n}/{k}": v for n, m in self.items() for k, v in m.to_dict().items()}

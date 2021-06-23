@@ -332,11 +332,8 @@ class Runner:
                 if model.epoch % args.validate_every == 0:
                     val_stat_dict = self.validate()
                     self.metrics(val_stat_dict)
-                    log_dict = {
-                        "metrics": logger.Table(
-                            dataframe=self.metrics.to_dataframe(),
-                        )
-                    }
+                    log_dict = self.metrics.to_dict()
+                    log_dict["epoch"] = model.epoch
                     logger.log(log_dict, model.iteration)
                     model.train()
         self.saver.dump()
