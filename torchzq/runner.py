@@ -437,7 +437,7 @@ class Runner:
     @zouqi.command
     def validate(self):
         return self.val_test_loop(
-            f"Validating current_epoch {self.current_epoch} ...",
+            f"Validating epoch {self.current_epoch} ...",
             self.validation_data_loader,
             self.validation_step,
         )
@@ -445,7 +445,7 @@ class Runner:
     @zouqi.command
     def test(self):
         return self.val_test_loop(
-            f"Testing current_epoch {self.current_epoch} ...",
+            f"Testing epoch {self.current_epoch} ...",
             self.testing_data_loader,
             self.testing_step,
         )
