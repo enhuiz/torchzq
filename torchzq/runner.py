@@ -338,6 +338,18 @@ class Runner:
 
     def training_loop(self):
         args = self.args
+
+        # run sanity check before every training loop
+        val_stat_dict = self.val_test_loop(
+            "Validation sanity checking ...",
+            self.sanity_check_data_loader,
+            self.validation_step,
+        )
+
+        # run metrics once before loop for sanity checking and state restoring
+        # pass None to avoid updating the original value
+        self.metrics({k: None for k in val_stat_dict})
+
         model = self.model.train()
         state = self.state
         logger = self.logger
@@ -419,17 +431,6 @@ class Runner:
         time_str = time.strftime("%Y%m%dT%H%M%S")
         with open(self.run_dir / f"config-{time_str}.yml", "w") as f:
             yaml.dump(vars(args), f)
-
-        sanity_stat_dict = self.val_test_loop(
-            "Validation sanity checking ...",
-            self.sanity_check_data_loader,
-            self.validation_step,
-        )
-
-        # sanity check for metrics, state_dict will be backed up and restored
-        state_dict = self.metrics.state_dict()
-        self.metrics(sanity_stat_dict)
-        self.metrics.load_state_dict(state_dict)
 
         return self.training_loop()
 

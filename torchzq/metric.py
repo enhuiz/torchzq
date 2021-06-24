@@ -20,14 +20,15 @@ class _Metric(nn.Module):
         self.count = 0
         self.minima = np.inf
 
-    def forward(self, value):
-        if value >= self.minima:
-            self.count += 1
-            for callback in self.callbacks:
-                callback(self.count)
-        else:
-            self.count = 0
-        self.minima = min(self.minima, value)
+    def forward(self, value=None):
+        if value is not None:
+            if value >= self.minima:
+                self.count += 1
+            else:
+                self.count = 0
+            self.minima = min(self.minima, value)
+        for callback in self.callbacks:
+            callback(self.count)
 
     def __str__(self):
         return f"Metric(count={self.count:.4g}, minima={self.minima:.4g})"
@@ -45,7 +46,7 @@ class Metrics(nn.ModuleDict):
 
     def forward(self, stat_dict):
         for name, metric in self.items():
-            if name not in stat_dict:
+            if stat_dict is not None and name not in stat_dict:
                 raise KeyError(
                     f'Metric "{name}" is not found in the stat_dict. '
                     f'Possible metrics are: {", ".join(stat_dict.keys())}.'
