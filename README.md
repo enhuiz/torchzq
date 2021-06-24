@@ -1,4 +1,4 @@
-# TorchZQ: A PyTorch experiment runner based on [Zouqi](https://github.com/enhuiz/zouqi)
+# TorchZQ: A PyTorch experiment runner based on [zouqi](https://github.com/enhuiz/zouqi)
 
 ## Installation
 
@@ -118,8 +118,7 @@ wandb login       # login
 ## Supported Features
 
 - [x] Model checkpoints
-- [x] Logging
+- [x] Logging (Weights & Biases)
 - [x] Gradient accumulation
 - [x] Configuration file
-- [x] Weights & Biases
 - [x] FP16
