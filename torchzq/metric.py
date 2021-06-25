@@ -1,18 +1,19 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from typing import Callable
+from typing import Literal
 
 from .utils import ItemProperty
 
 
-class _Metric(nn.Module):
+class Metric(nn.Module):
     count = ItemProperty()
     minima = ItemProperty()
 
-    def __init__(self, callbacks):
+    def __init__(self, callbacks, mode: Literal["min", "max"] = "min"):
         super().__init__()
         self.callbacks = list(callbacks)
+        self.mode = mode
         self.register_buffer("_count", torch.zeros([]).long())
         self.register_buffer("_minima", torch.full([], np.inf))
 
@@ -20,29 +21,43 @@ class _Metric(nn.Module):
         self.count = 0
         self.minima = np.inf
 
+    @property
+    def best_score(self):
+        if self.mode == "min":
+            return self.minima
+        return -self.minima
+
     def forward(self, value=None):
         if value is not None:
+            if self.mode == "max":
+                value = -value
             if value >= self.minima:
                 self.count += 1
             else:
                 self.count = 0
             self.minima = min(self.minima, value)
+
         for callback in self.callbacks:
             callback(self.count)
-
-    def __str__(self):
-        return f"Metric(count={self.count:.4g}, minima={self.minima:.4g})"
 
     def __repr__(self):
         return str(self)
 
     def to_dict(self):
-        return dict(count=self.count, minima=self.minima)
+        return dict(
+            count=self.count,
+            best_score=self.best_score,
+        )
 
 
 class Metrics(nn.ModuleDict):
-    def __init__(self, metrics: dict[str, list[Callable]] = {}):
-        super().__init__({n: _Metric(cs) for n, cs in metrics.items()})
+    def __init__(self, metric_dict: dict[str, Metric] = {}):
+        super().__init__(metric_dict)
+
+    def add_metric(self, name, callbacks, mode: Literal["min", "max"]):
+        if name in self:
+            raise ValueError(f'Metric "{name}" exists.')
+        self[name] = Metric(callbacks, mode)
 
     def forward(self, stat_dict):
         for name, metric in self.items():
