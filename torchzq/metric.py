@@ -54,7 +54,7 @@ class Metrics(nn.ModuleDict):
     def __init__(self, metric_dict: dict[str, Metric] = {}):
         super().__init__(metric_dict)
 
-    def add_metric(self, name, callbacks, mode: Literal["min", "max"]):
+    def add_metric(self, name, callbacks, mode: Literal["min", "max"] = "min"):
         if name in self:
             raise ValueError(f'Metric "{name}" exists.')
         self[name] = Metric(callbacks, mode)
