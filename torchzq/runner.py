@@ -174,7 +174,7 @@ class Runner:
 
     @cached_property
     def metrics(self):
-        return Metrics()
+        return self.create_metrics()
 
     @cached_property
     def model(self):
@@ -235,6 +235,9 @@ class Runner:
         )
         print("Dataset size:", len(dataset))
         return data_loader
+
+    def create_metrics(self):
+        return Metrics()
 
     def create_model(self):
         raise NotImplementedError
