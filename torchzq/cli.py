@@ -1,10 +1,11 @@
+import os
 import argparse
 from pathlib import Path
 from zouqi.utils import load_yaml
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("yaml", type=Path)
     parser.add_argument("command", type=str)
     args, manual_argv = parser.parse_known_args()
@@ -22,7 +23,7 @@ def main():
             )
         manual_argv.extend(["--name", str(Path(*rpath.parts[1:]))])
     cmd = f"{runner} {args.command} --config {args.yaml} {' '.join(manual_argv)} --config-ignored runner"
-    print(cmd)
+    os.system(cmd)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,6 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=find_packages(),
-    scripts=["tzq"],
     install_requires=[
         "torch",
         "zouqi==1.0.9.dev0",
@@ -26,4 +25,9 @@ setup(
         "wandb",
     ],
     url="https://github.com/enhuiz/torchzq",
+    entry_points={
+        "console_scripts": [
+            "tzq=torchzq.cli:main",
+        ],
+    },
 )

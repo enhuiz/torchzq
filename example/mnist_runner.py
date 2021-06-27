@@ -59,12 +59,15 @@ class Runner(torchzq.Runner):
         )
 
     def create_metrics(self):
+        metrics = super().create_metrics()
+
         def early_stop(count):
             if count >= 2:
                 # the metric does not go down for the latest two validations
                 self.args.max_epochs = -1  # this terminates the training
 
-        return Metrics({"val_loss": [early_stop]})
+        metrics.add_metric("val_loss", [early_stop])
+        return metrics
 
     def prepare_batch(self, batch):
         x, y = batch
