@@ -60,6 +60,7 @@ class Runner:
         from_scratch: Flag = False,
         seed: int = 0,
         wandb_project: str = "",
+        ckpt_tag: Optional[str] = None,
     ):
         self._cached_modes = []
         random.seed(seed)
@@ -80,7 +81,7 @@ class Runner:
         if args.ckpt is not None:
             return args.ckpt
         if not args.from_scratch:
-            return self.saver.latest_ckpt
+            return self.saver.get_latest_ckpt(args.ckpt_tag)
         return None
 
     @property
@@ -346,13 +347,17 @@ class Runner:
             self.validation_step,
         )
 
+        logger = self.logger
+
         # run metrics once before loop for sanity checking and state restoring
         # pass None to avoid updating the original value
         self.metrics({k: None for k in val_stat_dict})
+        log_dict = self.metrics.to_dict()
+        log_dict["epoch"] = self.current_epoch
+        logger.log(log_dict, self.global_step)
 
         model = self.model.train()
         state = self.state
-        logger = self.logger
 
         while state.current_epoch < args.max_epochs:
             state.current_epoch += 1
@@ -361,7 +366,7 @@ class Runner:
 
             def interrupt_callback(signum):
                 print("Trying to gracefully shutdown ...")
-                self.saver.dump()
+                self.saver.dump_all()
                 if signum == signal.SIGQUIT:
                     self.saver.save(model, self.optimizers, self.scaler)
                 sys.exit(0)
@@ -382,9 +387,6 @@ class Runner:
                             continue
                         else:
                             raise e
-                self.saver.buffer(model, self.optimizers, self.scaler)
-                if self.current_epoch % args.save_every == 0:
-                    self.saver.dump()
                 if self.current_epoch % args.validate_every == 0:
                     val_stat_dict = self.validate()
                     self.metrics(val_stat_dict)
@@ -392,7 +394,12 @@ class Runner:
                     log_dict["epoch"] = self.current_epoch
                     logger.log(log_dict, self.global_step)
                     model.train()
-        self.saver.dump()
+                # the model should be buffered after calling metrics
+                # as the status of metrics may be changed
+                self.saver.buffer(model, self.optimizers, self.scaler)
+                if self.current_epoch % args.save_every == 0:
+                    self.saver.dump()
+        self.saver.dump_all()
 
     def val_test_loop(self, desc, data_loader, step_fn):
         self.model.eval()

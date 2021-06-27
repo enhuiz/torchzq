@@ -2,6 +2,7 @@ import torch
 from queue import Queue
 from pathlib import Path
 from functools import lru_cache
+from collections import defaultdict
 
 
 def load_state_dict_lenient(model, state_dict):
@@ -29,32 +30,26 @@ def cached_load_ckpt(path):
     return torch.load(path, "cpu")
 
 
-class Buffer(dict):
-    def __init__(self, get_path):
-        self.get_path = get_path
-
-
 class Saver:
     def __init__(self, root: Path, strict: bool = False, buffer_size=1):
         self.root = root
         self.strict = strict
-        self.buffered = Queue(buffer_size)
+        self.buffer_dict = defaultdict(lambda: Queue(buffer_size))
 
-    @property
-    def ckpts(self):
-        return list(self.root.glob("*.ckpt"))
+    def get_ckpts(self, tag=None):
+        return list((self.root / (tag or "")).glob("*.ckpt"))
 
-    @property
-    def empty(self):
-        return len(self.ckpts) > 0
+    def get_latest_ckpt(self, tag):
+        return max(
+            self.get_ckpts(tag),
+            key=lambda ckpt: self.parse(ckpt)[1],
+            default=None,
+        )
 
-    @property
-    def latest_ckpt(self):
-        return max(self.ckpts, key=lambda ckpt: self.parse(ckpt)[1], default=None)
-
-    def get_path(self, model):
+    def get_path(self, model, tag=None):
         state = model.state
-        return self.root / f"epoch={state.current_epoch}-step={state.global_step}.ckpt"
+        name = f"epoch={state.current_epoch}-step={state.global_step}.ckpt"
+        return self.root / (tag or "") / name
 
     def parse(self, path):
         epoch, step = map(lambda kv: int(kv.split("=")[1]), path.stem.split("-"))
@@ -105,23 +100,27 @@ class Saver:
                 print(e)
                 print("Warning: loading scaler state dict failed.")
 
-    def buffer(self, model, optimizers=[], scaler=None):
-        path = self.get_path(model)
+    def buffer(self, model, optimizers=[], scaler=None, tag=None):
+        path = self.get_path(model, tag)
         data = dict(
             model=model.state_dict(),
             optimizers=[optimizer.state_dict() for optimizer in optimizers],
             scaler=scaler.state_dict() if scaler else None,
         )
-        if self.buffered.full():
-            self.buffered.get()
-        self.buffered.put([path, data])
+        if self.buffer_dict[tag].full():
+            self.buffer_dict[tag].get()
+        self.buffer_dict[tag].put([path, data])
 
-    def dump(self):
-        while not self.buffered.empty():
-            path, data = self.buffered.get()
+    def dump(self, tag=None):
+        while not self.buffer_dict[tag].empty():
+            path, data = self.buffer_dict[tag].get()
             path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(data, path)
             print(f"{path} saved.")
+
+    def dump_all(self):
+        for tag in self.buffer_dict.keys():
+            self.dump(tag)
 
     def save(self, model, optimizers=[], scaler=None):
         self.buffer(model, optimizers, scaler)
