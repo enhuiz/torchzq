@@ -40,9 +40,6 @@ class Metric(nn.Module):
         for callback in self.callbacks:
             callback(self.count)
 
-    def __repr__(self):
-        return str(self)
-
     def to_dict(self):
         return dict(
             count=self.count,
