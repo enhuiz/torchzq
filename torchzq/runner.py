@@ -60,7 +60,7 @@ class Runner:
         from_scratch: Flag = False,
         seed: int = 0,
         wandb_project: str = "",
-        ckpt_tag: Optional[str] = None,
+        ckpt_namespace: Optional[str] = None,
     ):
         self._cached_modes = []
         random.seed(seed)
@@ -81,7 +81,7 @@ class Runner:
         if args.ckpt is not None:
             return args.ckpt
         if not args.from_scratch:
-            return self.saver.get_latest_ckpt(args.ckpt_tag)
+            return self.saver.get_latest_ckpt(args.ckpt_namespace)
         return None
 
     @property

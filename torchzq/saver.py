@@ -36,20 +36,20 @@ class Saver:
         self.strict = strict
         self.buffer_dict = defaultdict(lambda: Queue(buffer_size))
 
-    def get_ckpts(self, tag=None):
-        return list((self.root / (tag or "")).glob("*.ckpt"))
+    def get_ckpts(self, namespace=None):
+        return list((self.root / (namespace or "")).glob("*.ckpt"))
 
-    def get_latest_ckpt(self, tag):
+    def get_latest_ckpt(self, namespace):
         return max(
-            self.get_ckpts(tag),
+            self.get_ckpts(namespace),
             key=lambda ckpt: self.parse(ckpt)[1],
             default=None,
         )
 
-    def get_path(self, model, tag=None):
+    def get_path(self, model, namespace=None):
         state = model.state
         name = f"epoch={state.current_epoch}-step={state.global_step}.ckpt"
-        return self.root / (tag or "") / name
+        return self.root / (namespace or "") / name
 
     def parse(self, path):
         epoch, step = map(lambda kv: int(kv.split("=")[1]), path.stem.split("-"))
@@ -100,27 +100,27 @@ class Saver:
                 print(e)
                 print("Warning: loading scaler state dict failed.")
 
-    def buffer(self, model, optimizers=[], scaler=None, tag=None):
-        path = self.get_path(model, tag)
+    def buffer(self, model, optimizers=[], scaler=None, namespace=None):
+        path = self.get_path(model, namespace)
         data = dict(
             model=model.state_dict(),
             optimizers=[optimizer.state_dict() for optimizer in optimizers],
             scaler=scaler.state_dict() if scaler else None,
         )
-        if self.buffer_dict[tag].full():
-            self.buffer_dict[tag].get()
-        self.buffer_dict[tag].put([path, data])
+        if self.buffer_dict[namespace].full():
+            self.buffer_dict[namespace].get()
+        self.buffer_dict[namespace].put([path, data])
 
-    def dump(self, tag=None):
-        while not self.buffer_dict[tag].empty():
-            path, data = self.buffer_dict[tag].get()
+    def dump(self, namespace=None):
+        while not self.buffer_dict[namespace].empty():
+            path, data = self.buffer_dict[namespace].get()
             path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(data, path)
             print(f"{path} saved.")
 
     def dump_all(self):
-        for tag in self.buffer_dict.keys():
-            self.dump(tag)
+        for namespace in self.buffer_dict.keys():
+            self.dump(namespace)
 
     def save(self, model, optimizers=[], scaler=None):
         self.buffer(model, optimizers, scaler)
