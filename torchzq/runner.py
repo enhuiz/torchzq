@@ -9,7 +9,6 @@ import numpy as np
 import random
 import torch
 import torch.nn as nn
-import signal
 import wandb
 from pathlib import Path
 from collections import defaultdict
@@ -17,34 +16,25 @@ from torch.utils.data import DataLoader
 from functools import partial, cached_property
 from collections import defaultdict
 from itertools import islice
+from enum import Enum
 
 import zouqi
 
-from .typing import Flag, Scheduled, _Scheduled, Optional, Literal
+from .typing import Flag, Scheduled, _Scheduled, Optional
 from .saver import Saver
 from .scheduler import Scheduler
 from .interrupt import graceful_interrupt_handler
 from .utils import print_directory_tree, default_tuple
 from .metric import Metrics
-from .utils import ItemProperty
-
-Mode = Literal["training", "validation", "testing"]
-
-
-class State(nn.Module):
-    backward_counter = ItemProperty()
-    global_step = ItemProperty()
-    current_epoch = ItemProperty()
-
-    def __init__(self):
-        super().__init__()
-        self.register_buffer("_backward_counter", torch.zeros([]).long())
-        self.register_buffer("_global_step", torch.zeros([]).long())
-        self.register_buffer("_current_epoch", torch.zeros([]).long())
 
 
 class Runner:
     args: Optional[argparse.Namespace] = None
+
+    class Mode(Enum):
+        TRAIN = 0
+        TEST = 1
+        VAL = 2
 
     def __init__(
         self,
@@ -76,15 +66,6 @@ class Runner:
         return self.args.name
 
     @property
-    def ckpt(self):
-        args = self.args
-        if args.ckpt is not None:
-            return args.ckpt
-        if not args.from_scratch:
-            return self.saver.get_latest_ckpt(args.ckpt_namespace)
-        return None
-
-    @property
     def run_dir(self):
         return self.args.runs_root / self.name
 
@@ -101,16 +82,12 @@ class Runner:
         return self.model.state
 
     @property
-    def backward_counter(self):
-        return self.state.backward_counter
-
-    @property
     def global_step(self):
-        return self.state.global_step
+        return self.state.step
 
     @property
     def current_epoch(self):
-        return self.state.current_epoch
+        return self.state.epoch
 
     @property
     def Optimizer(self):
@@ -134,6 +111,14 @@ class Runner:
 
     def prepare_batch(self, batch):
         return batch
+
+    @property
+    def backward_counter(self):
+        return getattr(self, "_backward_counter", 0)
+
+    @backward_counter.setter
+    def backward_counter(self, value):
+        self._backward_counter = value
 
     ########
     # Lazy #
@@ -159,15 +144,15 @@ class Runner:
 
     @cached_property
     def training_data_loader(self):
-        return self.create_data_loader("training")
+        return self.create_data_loader(self.Mode.TRAIN)
 
     @cached_property
     def validation_data_loader(self):
-        return self.create_data_loader("validation")
+        return self.create_data_loader(self.Mode.VAL)
 
     @cached_property
     def testing_data_loader(self):
-        return self.create_data_loader("testing")
+        return self.create_data_loader(self.Mode.TEST)
 
     @cached_property
     def sanity_check_data_loader(self):
@@ -185,11 +170,10 @@ class Runner:
         model = self.create_model()
         model.to(args.device)
         model.metrics = self.metrics
-        model.state = State()
-        saver.load(self.ckpt, model=model)
+        saver.load(model=model, path=args.ckpt)
         scheduler.step(
-            current_epoch=model.state.current_epoch,
-            global_step=model.state.global_step,
+            current_epoch=model.state.epoch,
+            global_step=model.state.step,
         )
         return model
 
@@ -204,7 +188,7 @@ class Runner:
                 for k, v in d.items():
                     if torch.is_tensor(v):
                         d[k] = v.to(args.device)
-        self.saver.load(self.ckpt, optimizers=optimizers)
+        self.saver.load(optimizers=optimizers, path=args.ckpt)
         return optimizers
 
     @cached_property
@@ -212,7 +196,7 @@ class Runner:
         args = self.args
         if args.use_fp16:
             scaler = torch.cuda.amp.GradScaler()
-            self.saver.load(self.ckpt, scaler=scaler)
+            self.saver.load(scaler=scaler, path=args.ckpt)
         else:
             scaler = None
         return scaler
@@ -274,8 +258,8 @@ class Runner:
         stat_dict = {}
         start_time = time.time()
 
-        state.backward_counter += 1
-        state.global_step += self.backward_counter % args.update_every == 0
+        self.backward_counter += 1
+        state.step += self.backward_counter % args.update_every == 0
 
         self.scheduler.step(
             current_epoch=self.current_epoch,
@@ -333,6 +317,11 @@ class Runner:
     def testing_step(self, batch, batch_idx: int) -> dict:
         raise NotImplementedError
 
+    def exit(self, reason):
+        self.saver.buffer(self.model, self.optimizers, self.scaler, reason)
+        self.saver.dump_all()
+        sys.exit(0)
+
     #########
     # Loops #
     #########
@@ -359,20 +348,17 @@ class Runner:
         model = self.model.train()
         state = self.state
 
-        while state.current_epoch < args.max_epochs:
-            state.current_epoch += 1
+        while self.current_epoch < args.max_epochs:
+            state.epoch += 1
             desc = f"Train: {self.current_epoch}/{args.max_epochs}"
             pbar = tqdm.tqdm(self.training_data_loader, desc=desc)
 
             def interrupt_callback(signum):
                 print("Trying to gracefully shutdown ...")
-                self.saver.dump_all()
-                if signum == signal.SIGQUIT:
-                    self.saver.save(model, self.optimizers, self.scaler)
-                sys.exit(0)
+                self.exit("interrupt")
 
             with graceful_interrupt_handler(callback=interrupt_callback):
-                for self.batch in pbar:
+                for local_step, self.batch in enumerate(pbar):
                     try:
                         stat_dict = self.training_step_with_optimization(self.batch)
                         if self.global_step % args.log_every == 0:
@@ -387,19 +373,38 @@ class Runner:
                             continue
                         else:
                             raise e
-                if self.current_epoch % args.validate_every == 0:
-                    val_stat_dict = self.validate()
-                    self.metrics(val_stat_dict)
-                    log_dict = self.metrics.to_dict()
-                    log_dict["epoch"] = self.current_epoch
-                    logger.log(log_dict, self.global_step)
-                    model.train()
-                # the model should be buffered after calling metrics
-                # as the status of metrics may be changed
-                self.saver.buffer(model, self.optimizers, self.scaler)
-                if self.current_epoch % args.save_every == 0:
-                    self.saver.dump()
-        self.saver.dump_all()
+
+                    is_validating = (
+                        args.validate_every_steps is not None
+                        and self.global_step % args.validate_every_steps == 0
+                    ) or (
+                        args.validate_every_epochs is not None
+                        and local_step == pbar.total - 1
+                        and self.current_epoch % args.validate_every_epochs == 0
+                    )
+
+                    if is_validating:
+                        val_stat_dict = self.validate()
+                        self.metrics(val_stat_dict)
+                        log_dict = self.metrics.to_dict()
+                        log_dict["epoch"] = self.current_epoch
+                        logger.log(log_dict, self.global_step)
+                        model.train()
+
+                    is_saving = (
+                        args.save_every_steps is not None
+                        and self.global_step % args.save_every_steps == 0
+                    ) or (
+                        args.save_every_epochs is not None
+                        and local_step == pbar.total - 1
+                        and self.current_epoch % args.save_every_epochs == 0
+                    )
+
+                    if is_saving:
+                        self.saver.buffer(model, self.optimizers, self.scaler)
+                        self.saver.dump()
+
+        self.exit("finished")
 
     def val_test_loop(self, desc, data_loader, step_fn):
         self.model.eval()
@@ -424,15 +429,17 @@ class Runner:
         self,
         weight_decay: float = 0,
         max_epochs: int = 100,
-        save_every: int = 1,
-        validate_every: int = None,
+        save_every_epochs: int = 1,
+        validate_every_epochs: int = None,
+        save_every_steps: int = None,
+        validate_every_steps: int = None,
         update_every: int = 1,
         log_every: int = 10,
         grad_clip_thres: float = 1.0,
     ):
         args = self.args
-        if validate_every is None:
-            args.validate_every = save_every
+        if validate_every_epochs is None:
+            args.validate_every_epochs = save_every_epochs
 
         self.run_dir.mkdir(parents=True, exist_ok=True)
         time_str = time.strftime("%Y%m%dT%H%M%S")
