@@ -303,11 +303,14 @@ class Runner:
 
                 stat_dict[f"grad_norm_{i}"] = grad_norm.item()
 
-                if args.use_fp16:
-                    self.scaler.step(optimizer)
-                    self.scaler.update()
+                if grad_norm.isfinite():
+                    if args.use_fp16:
+                        self.scaler.step(optimizer)
+                        self.scaler.update()
+                    else:
+                        optimizer.step()
                 else:
-                    optimizer.step()
+                    print("Warning: grad_norm is not finite. Skip optimization.")
 
                 optimizer.zero_grad()
 
