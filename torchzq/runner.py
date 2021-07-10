@@ -50,7 +50,7 @@ class Runner:
         from_scratch: Flag = False,
         seed: int = 0,
         wandb_project: str = "",
-        ckpt_namespace: Optional[str] = None,
+        ckpt_namespace: str = "default",
     ):
         self._cached_modes = []
         random.seed(seed)
@@ -170,7 +170,7 @@ class Runner:
         model = self.create_model()
         model.to(args.device)
         model.metrics = self.metrics
-        saver.load(model=model, path=args.ckpt)
+        saver.load(model=model, namespace=args.namespace, path=args.ckpt)
         scheduler.step(
             current_epoch=model.state.epoch,
             global_step=model.state.step,
@@ -188,7 +188,7 @@ class Runner:
                 for k, v in d.items():
                     if torch.is_tensor(v):
                         d[k] = v.to(args.device)
-        self.saver.load(optimizers=optimizers, path=args.ckpt)
+        self.saver.load(optimizers=optimizers, namespace=args.namespace, path=args.ckpt)
         return optimizers
 
     @cached_property
@@ -196,7 +196,7 @@ class Runner:
         args = self.args
         if args.use_fp16:
             scaler = torch.cuda.amp.GradScaler()
-            self.saver.load(scaler=scaler, path=args.ckpt)
+            self.saver.load(scaler=scaler, namespace=args.namespace, path=args.ckpt)
         else:
             scaler = None
         return scaler
