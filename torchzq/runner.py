@@ -227,8 +227,8 @@ class Runner:
             dataset=dataset,
             batch_size=args.batch_size,
             num_workers=args.nj,
-            shuffle=mode == "training",
-            drop_last=mode == "training",
+            shuffle=mode == self.Mode.TRAIN,
+            drop_last=mode == self.Mode.TRAIN,
         )
         print("Dataset size:", len(dataset))
         return data_loader
@@ -271,7 +271,7 @@ class Runner:
         start_time = time.time()
 
         self.backward_counter += 1
-        state.step += self.backward_counter % args.update_every == 0
+        state.step += self.backward_counter % args.update_every_backwards == 0
 
         self.scheduler.step(
             current_epoch=self.current_epoch,
@@ -284,15 +284,14 @@ class Runner:
 
             loss = outputs[0]
             stat_dict.update(outputs[1])
-            if "loss" not in stat_dict:
-                stat_dict["loss"] = loss.item()
 
-            if args.use_fp16:
-                self.scaler.scale(loss / args.update_every).backward()
-            else:
-                (loss / args.update_every).backward()
+            if loss is not None:
+                if args.use_fp16:
+                    self.scaler.scale(loss / args.update_every_backwards).backward()
+                else:
+                    (loss / args.update_every_backwards).backward()
 
-            if self.backward_counter % args.update_every == 0:
+            if self.backward_counter % args.update_every_backwards == 0:
                 if args.use_fp16:
                     self.scaler.unscale_(optimizer)
 
@@ -322,10 +321,7 @@ class Runner:
         stat_dict = {}
         for i in range(len(self.optimizers)):
             outputs = default_tuple(self.training_step(batch, i), [None, {}])
-            loss = outputs[0]
             stat_dict.update(outputs[1])
-            if "loss" not in stat_dict:
-                stat_dict["loss"] = loss.item()
         stat_dict = {f"val_{k}": v for k, v in stat_dict.items()}
         return stat_dict
 
@@ -448,7 +444,7 @@ class Runner:
         validate_every_epochs: int = None,
         save_every_steps: int = None,
         validate_every_steps: int = None,
-        update_every: int = 1,
+        update_every_backwards: int = 1,
         log_every: int = 10,
         grad_clip_thres: float = 1.0,
     ):
