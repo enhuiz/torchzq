@@ -64,24 +64,23 @@ class Saver:
     def _preload(self):
         for folder in self.root.glob("*"):
             namespace = folder.name
-            path = self._find_latest_ckpt_path(namespace)
+            path = self.find_latest_ckpt_path(namespace)
             if path and path.exists():
                 data = torch.load(path, "cpu")
                 self.buffered[namespace] = data
-
                 # for compatibility
                 if "state" not in data:
                     data["state"] = str(State.from_string(path.stem))
 
-    def _find_ckpt_paths(self, namespace="default"):
-        return list((self.root / namespace).glob("*.ckpt"))
-
-    def _find_latest_ckpt_path(self, namespace):
-        paths = self._find_ckpt_paths(namespace)
-        return max(paths, key=lambda p: State.parse(p.stem)[-1], default=None)
-
     def _get_ckpt_path(self, namespace, stem):
         return (self.root / namespace / stem).with_suffix(".ckpt")
+
+    def find_ckpt_paths(self, namespace="default"):
+        return list((self.root / namespace).glob("*.ckpt"))
+
+    def find_latest_ckpt_path(self, namespace):
+        paths = self.find_ckpt_paths(namespace)
+        return max(paths, key=lambda p: State.parse(p.stem)[-1], default=None)
 
     def load(
         self,
