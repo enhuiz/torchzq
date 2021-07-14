@@ -7,7 +7,7 @@ setup(
     name="torchzq",
     python_requires=">=3.9.0",
     version="1.0.9.dev1",
-    description="TorchZQ: A simple PyTorch experiment runner.",
+    description="TorchZQ: A PyTorch experiment runner.",
     author="enhuiz",
     author_email="niuzhe.nz@outlook.com",
     long_description=long_description,

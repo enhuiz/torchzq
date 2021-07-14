@@ -47,10 +47,10 @@ class Runner:
         use_fp16: bool = False,
         ckpt: Path = None,
         lr: Scheduled = "1e-3",
-        from_scratch: Flag = False,
         seed: int = 0,
         wandb_project: str = "",
         ckpt_namespace: str = "default",
+        log_every: int = 10,
     ):
         self._cached_modes = []
         random.seed(seed)
@@ -322,7 +322,6 @@ class Runner:
         for i in range(len(self.optimizers)):
             outputs = default_tuple(self.training_step(batch, i), [None, {}])
             stat_dict.update(outputs[1])
-        stat_dict = {f"val_{k}": v for k, v in stat_dict.items()}
         return stat_dict
 
     def testing_step(self, batch, batch_idx: int) -> dict:
@@ -340,14 +339,14 @@ class Runner:
     def training_loop(self):
         args = self.args
 
+        logger = self.logger
+
         # run sanity check before every training loop
         val_stat_dict = self.val_test_loop(
             "Validation sanity checking ...",
             self.sanity_check_data_loader,
             self.validation_step,
         )
-
-        logger = self.logger
 
         # run metrics once before loop for sanity checking and state restoring
         # pass None to avoid updating the original value
@@ -373,6 +372,7 @@ class Runner:
                     try:
                         stat_dict = self.training_step_with_optimization(self.batch)
                         if self.global_step % args.log_every == 0:
+                            stat_dict = {f"train/{k}": v for k, v in stat_dict.items()}
                             logger.log(stat_dict, self.global_step)
                     except RuntimeError as e:
                         if "out of memory" in str(e):
@@ -395,8 +395,7 @@ class Runner:
                     )
 
                     if is_validating:
-                        val_stat_dict = self.validate()
-                        self.metrics(val_stat_dict)
+                        self.metrics(self.validate())
                         log_dict = self.metrics.to_dict()
                         log_dict["epoch"] = self.current_epoch
                         logger.log(log_dict, self.global_step)
@@ -426,9 +425,6 @@ class Runner:
             for k, v in outputs[0].items():
                 stats_dict[k].append(v)
         stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
-        if stat_dict:
-            stat_dict["epoch"] = self.current_epoch
-            self.logger.log(stat_dict, self.global_step)
         return stat_dict
 
     ############
@@ -445,7 +441,6 @@ class Runner:
         save_every_steps: int = None,
         validate_every_steps: int = None,
         update_every_backwards: int = 1,
-        log_every: int = 10,
         grad_clip_thres: float = 1.0,
     ):
         args = self.args
@@ -461,19 +456,29 @@ class Runner:
 
     @zouqi.command
     def validate(self):
-        return self.val_test_loop(
+        stat_dict = self.val_test_loop(
             f"Validating epoch {self.current_epoch} ...",
             self.validation_data_loader,
             self.validation_step,
         )
+        if stat_dict:
+            stat_dict = {f"val/{k}": v for k, v in stat_dict.items()}
+            stat_dict["epoch"] = self.current_epoch
+            self.logger.log(stat_dict, self.global_step)
+        return stat_dict
 
     @zouqi.command
     def test(self):
-        return self.val_test_loop(
+        stat_dict = self.val_test_loop(
             f"Testing epoch {self.current_epoch} ...",
             self.testing_data_loader,
             self.testing_step,
         )
+        if stat_dict:
+            stat_dict = {f"test/{k}": v for k, v in stat_dict.items()}
+            stat_dict["epoch"] = self.current_epoch
+            self.logger.log(stat_dict, self.global_step)
+        return stat_dict
 
     @staticmethod
     def try_rmtree(path):
