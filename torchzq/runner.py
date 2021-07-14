@@ -461,8 +461,8 @@ class Runner:
             self.validation_data_loader,
             self.validation_step,
         )
+        stat_dict = {f"val/{k}": v for k, v in stat_dict.items()}
         if stat_dict:
-            stat_dict = {f"val/{k}": v for k, v in stat_dict.items()}
             stat_dict["epoch"] = self.current_epoch
             self.logger.log(stat_dict, self.global_step)
         return stat_dict
@@ -474,8 +474,8 @@ class Runner:
             self.testing_data_loader,
             self.testing_step,
         )
+        stat_dict = {f"test/{k}": v for k, v in stat_dict.items()}
         if stat_dict:
-            stat_dict = {f"test/{k}": v for k, v in stat_dict.items()}
             stat_dict["epoch"] = self.current_epoch
             self.logger.log(stat_dict, self.global_step)
         return stat_dict
