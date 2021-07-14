@@ -342,15 +342,11 @@ class Runner:
         logger = self.logger
 
         # run sanity check before every training loop
-        val_stat_dict = self.val_test_loop(
-            "Validation sanity checking ...",
-            self.sanity_check_data_loader,
-            self.validation_step,
-        )
+        sanity_stat_dict = self.validate(sanity=True)
 
         # run metrics once before loop for sanity checking and state restoring
         # pass None to avoid updating the original value
-        self.metrics({k: None for k in val_stat_dict})
+        self.metrics({k: None for k in sanity_stat_dict})
         log_dict = self.metrics.to_dict()
         log_dict["epoch"] = self.current_epoch
         logger.log(log_dict, self.global_step)
@@ -455,10 +451,12 @@ class Runner:
         return self.training_loop()
 
     @zouqi.command
-    def validate(self):
+    def validate(self, sanity: bool = False):
         stat_dict = self.val_test_loop(
-            f"Validating epoch {self.current_epoch} ...",
-            self.validation_data_loader,
+            f"Validating epoch {self.current_epoch} "
+            + ("(sanity checking) " if sanity else "")
+            + "...",
+            self.sanity_check_data_loader if sanity else self.validation_data_loader,
             self.validation_step,
         )
         stat_dict = {f"val/{k}": v for k, v in stat_dict.items()}
