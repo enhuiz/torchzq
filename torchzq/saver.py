@@ -47,6 +47,14 @@ class State(nn.Module):
         epoch, step = cls.parse(s)
         return cls(epoch=epoch, step=step)
 
+    @classmethod
+    def parse_epoch(cls, s):
+        return cls.parse(s)[0]
+
+    @classmethod
+    def parse_step(cls, s):
+        return cls.parse(s)[1]
+
     def __str__(self):
         return f"epoch={self.epoch}-step={self.step}"
 
@@ -114,6 +122,7 @@ class Saver:
             print(f"{self._get_ckpt_path(namespace, str(model.state))} loaded.")
 
         state_dicts = data.get("optimizers", [])
+
         for i, (optimizer, state_dict) in enumerate(zip(optimizers, state_dicts)):
             try:
                 optimizer.load_state_dict(state_dict)
@@ -146,10 +155,11 @@ class Saver:
 
     def dump(self, namespace="default"):
         data = self.buffered[namespace]
-        path = self._get_ckpt_path(namespace, data["state"])
-        path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(data, path)
-        print(f"{path} dumped.")
+        if State.parse_step(data["state"]) > 0:
+            path = self._get_ckpt_path(namespace, data["state"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(data, path)
+            print(f"{path} dumped.")
 
     def dump_all(self):
         for namespace in self.buffered.keys():
