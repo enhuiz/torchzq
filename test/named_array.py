@@ -45,3 +45,7 @@ def test():
     a = torch.cat([a, torch.ones([1])])
 
     assert (na == a).all()
+
+    na["g"] = torch.zeros([])
+    a = torch.cat([a, torch.zeros([1])])
+    assert (na == a).all()

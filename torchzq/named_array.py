@@ -67,6 +67,8 @@ class NamedArray:
     def __setitem__(self, key, value):
         if key not in self.keys():
             self._keys.append(key)
+            if value.dim() == 0:
+                value = value.unsqueeze(0)
             self._values = torch.cat([self.values(), value])
         else:
             self._values[self.keys().index(key)] = value
