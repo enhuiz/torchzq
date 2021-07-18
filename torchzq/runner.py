@@ -432,16 +432,22 @@ class Runner:
         self,
         weight_decay: float = 0,
         max_epochs: int = 100,
-        save_every_epochs: int = 1,
-        validate_every_epochs: int = None,
+        save_every_epochs: int = None,
         save_every_steps: int = None,
+        validate_every_epochs: int = None,
         validate_every_steps: int = None,
         update_every_backwards: int = 1,
         grad_clip_thres: float = 1.0,
     ):
         args = self.args
-        if validate_every_epochs is None:
-            args.validate_every_epochs = save_every_epochs
+
+        if validate_every_epochs is None and validate_every_steps is None:
+            if input("validate_every not set, do you want to skip validation?") != "y":
+                exit()
+
+        if save_every_epochs is None and save_every_steps is None:
+            if input("save_every not set, do you want to skip regular saving?") != "y":
+                exit()
 
         self.run_dir.mkdir(parents=True, exist_ok=True)
         time_str = time.strftime("%Y%m%dT%H%M%S")

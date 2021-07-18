@@ -41,10 +41,7 @@ class Metric(nn.Module):
             callback(self.count)
 
     def to_dict(self):
-        return dict(
-            count=self.count,
-            best_score=self.best_score,
-        )
+        return dict(count=self.count, best_score=self.best_score)
 
 
 class Metrics(nn.ModuleDict):
