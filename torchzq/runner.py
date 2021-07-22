@@ -262,6 +262,13 @@ class Runner:
     def training_step(self, batch, optimizer_idx: int) -> tuple[torch.Tensor, dict]:
         raise NotImplementedError
 
+    def _clip_grad_norm(self, optimizer_idx):
+        args = self.args
+        return nn.utils.clip_grad_norm_(
+            self.model.parameters(),
+            args.grad_clip_thres or 1e9,
+        )
+
     def training_step_with_optimization(self, batch) -> dict:
         args = self.args
         model = self.model
@@ -295,10 +302,7 @@ class Runner:
                 if args.use_fp16:
                     self.scaler.unscale_(optimizer)
 
-                grad_norm = nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    args.grad_clip_thres or 1e9,
-                )
+                grad_norm = self._clip_grad_norm(i)
 
                 stat_dict[f"grad_norm_{i}"] = grad_norm.item()
 
