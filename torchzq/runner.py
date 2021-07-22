@@ -264,6 +264,8 @@ class Runner:
 
     def clip_grad_norm(self, optimizer_idx):
         args = self.args
+        msg = "If you have more than one optimizers, please override clip_grad_norm()."
+        assert optimizer_idx < 1, msg
         return nn.utils.clip_grad_norm_(
             self.model.parameters(),
             args.grad_clip_thres or 1e9,
