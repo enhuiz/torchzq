@@ -64,6 +64,13 @@ class NamedArray:
     def items(self):
         return zip(self.keys(), self.values())
 
+    def __iter__(self):
+        yield from self.keys()
+
+    def update(self, other):
+        for key in other:
+            self[key] = other[key]
+
     def __setitem__(self, key, value):
         if key not in self.keys():
             self._keys.append(key)

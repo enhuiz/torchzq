@@ -14,7 +14,6 @@ def test():
 
     indices = [3, 4, 2, 1, 0]
     snb = NamedArray(dict(zip(["abcde"[i] for i in indices], b[indices])))
-    print(snb)
 
     assert ((0 + nb).values() == (0 + b)).all()
     assert ((0 - nb).values() == (0 - b)).all()
@@ -49,3 +48,6 @@ def test():
     na["g"] = torch.zeros([])
     a = torch.cat([a, torch.zeros([1])])
     assert (na == a).all()
+
+    nb.update(na)
+    assert (nb == na).all()
