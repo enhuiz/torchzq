@@ -1,4 +1,5 @@
 import torch
+from collections.abc import Mapping
 
 
 class _Operator:
@@ -21,7 +22,7 @@ class _Method:
         return getattr(obj._values, self.method)
 
 
-class NamedArray:
+class NamedArray(Mapping):
     __add__ = _Operator()
     __div__ = _Operator()
     __mul__ = _Operator()
@@ -64,12 +65,14 @@ class NamedArray:
     def items(self):
         return zip(self.keys(), self.values())
 
-    def __iter__(self):
-        yield from self.keys()
-
     def update(self, other):
         for key in other:
             self[key] = other[key]
+
+    def _get_values(self, other):
+        if isinstance(other, NamedArray):
+            return torch.stack([other[k] for k in self.keys()])
+        return other
 
     def __setitem__(self, key, value):
         if key not in self.keys():
@@ -88,7 +91,8 @@ class NamedArray:
     def __str__(self):
         return str(dict(sorted(zip(self.keys(), self.values()))))
 
-    def _get_values(self, other):
-        if isinstance(other, NamedArray):
-            return torch.stack([other[k] for k in self.keys()])
-        return other
+    def __len__(self):
+        return len(self._keys)
+
+    def __iter__(self):
+        yield from self.keys()
