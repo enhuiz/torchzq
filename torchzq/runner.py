@@ -20,7 +20,7 @@ from enum import Enum
 
 import zouqi
 
-from .typing import Flag, Scheduled, _Scheduled, Optional
+from .typing import Scheduled, _Scheduled, Optional
 from .saver import Saver
 from .scheduler import Scheduler
 from .interrupt import graceful_interrupt_handler
@@ -95,7 +95,7 @@ class Runner:
 
     @property
     def DataLoader(self):
-        return DataLoader
+        return partial(DataLoader, pin_memory=True)
 
     ############
     # Settable #
