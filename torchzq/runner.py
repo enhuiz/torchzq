@@ -447,12 +447,14 @@ class Runner:
     ):
         args = self.args
 
+        tmpl = "{} not set, are your sure to skip {}? (y/n): "
+
         if validate_every_epochs is None and validate_every_steps is None:
-            if input("validate_every not set, do you want to skip validation?") != "y":
+            if input(tmpl.format("validate_every_*", "validation")) != "y":
                 exit()
 
         if save_every_epochs is None and save_every_steps is None:
-            if input("save_every not set, do you want to skip regular saving?") != "y":
+            if input(tmpl.format("save_every_*", "saving")) != "y":
                 exit()
 
         self.run_dir.mkdir(parents=True, exist_ok=True)
