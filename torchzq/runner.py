@@ -94,7 +94,7 @@ class Runner:
 
     @property
     def DataLoader(self):
-        return partial(DataLoader, pin_memory=True)
+        return DataLoader
 
     @property
     def lr_coef(self):
