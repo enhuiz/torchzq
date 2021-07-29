@@ -52,7 +52,6 @@ class Runner:
         ckpt_namespace: str = "default",
         log_every: int = 10,
     ):
-        self._cached_modes = []
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
@@ -97,20 +96,13 @@ class Runner:
     def DataLoader(self):
         return partial(DataLoader, pin_memory=True)
 
+    @property
+    def lr_coef(self):
+        return 1
+
     ############
     # Settable #
     ############
-
-    @property
-    def batch(self):
-        return getattr(self, "_batch", None)
-
-    @batch.setter
-    def batch(self, value):
-        setattr(self, "_batch", self.prepare_batch(value))
-
-    def prepare_batch(self, batch):
-        return batch
 
     @property
     def backward_counter(self):
@@ -239,15 +231,6 @@ class Runner:
     def create_model(self):
         raise NotImplementedError
 
-    @staticmethod
-    def set_lr(optimizer, lr):
-        for g in optimizer.param_groups:
-            g["lr"] = lr
-
-    @property
-    def lr_coef(self):
-        return 1
-
     def create_optimizers(self):
         self.scheduler
         args = self.args
@@ -256,11 +239,16 @@ class Runner:
         return [optimizer]
 
     #########
-    # Steps #
+    # Misc. #
     #########
 
-    def training_step(self, batch, optimizer_idx: int) -> tuple[torch.Tensor, dict]:
-        raise NotImplementedError
+    @staticmethod
+    def set_lr(optimizer, lr):
+        for g in optimizer.param_groups:
+            g["lr"] = lr
+
+    def prepare_batch(self, batch):
+        return batch
 
     def clip_grad_norm(self, optimizer_idx):
         args = self.args
@@ -271,9 +259,15 @@ class Runner:
             args.grad_clip_thres or 1e9,
         )
 
+    #########
+    # Steps #
+    #########
+
+    def training_step(self, batch, optimizer_idx: int) -> tuple[torch.Tensor, dict]:
+        raise NotImplementedError
+
     def training_step_with_optimization(self, batch) -> dict:
         args = self.args
-        model = self.model
         state = self.state
 
         stat_dict = {}
@@ -370,9 +364,10 @@ class Runner:
                 self.exit("interrupt")
 
             with graceful_interrupt_handler(callback=interrupt_callback):
-                for local_step, self.batch in enumerate(pbar):
+                for local_step, batch in enumerate(pbar):
+                    prepared_batch = self.prepare_batch(batch)
                     try:
-                        stat_dict = self.training_step_with_optimization(self.batch)
+                        stat_dict = self.training_step_with_optimization(prepared_batch)
                         if self.global_step % args.log_every == 0:
                             stat_dict = {f"train/{k}": v for k, v in stat_dict.items()}
                             logger.log(stat_dict, self.global_step)
@@ -422,8 +417,9 @@ class Runner:
         self.model.eval()
         pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
-        for index, self.batch in enumerate(pbar):
-            outputs = default_tuple(step_fn(self.batch, index), [{}])
+        for index, batch in enumerate(pbar):
+            prepared_batch = self.prepare_batch(batch)
+            outputs = default_tuple(step_fn(prepared_batch, index), [{}])
             for k, v in outputs[0].items():
                 stats_dict[k].append(v)
         stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
