@@ -160,7 +160,8 @@ class Saver:
             path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(data, path)
             print(f"{path} dumped.")
+        del self.buffered[namespace]
 
     def dump_all(self):
-        for namespace in self.buffered.keys():
+        for namespace in list(self.buffered):
             self.dump(namespace)
