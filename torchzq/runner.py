@@ -354,16 +354,16 @@ class Runner:
         model = self.model.train()
         state = self.state
 
-        while self.current_epoch < args.max_epochs:
-            state.epoch += 1
-            desc = f"Train: {self.current_epoch}/{args.max_epochs}"
-            pbar = tqdm.tqdm(self.training_data_loader, desc=desc)
+        def interrupt_callback(signum):
+            print("Trying to gracefully shutdown ...")
+            self.exit("interrupt")
 
-            def interrupt_callback(signum):
-                print("Trying to gracefully shutdown ...")
-                self.exit("interrupt")
+        with graceful_interrupt_handler(callback=interrupt_callback):
+            while self.current_epoch < args.max_epochs:
+                state.epoch += 1
+                desc = f"Train: {self.current_epoch}/{args.max_epochs}"
+                pbar = tqdm.tqdm(self.training_data_loader, desc=desc)
 
-            with graceful_interrupt_handler(callback=interrupt_callback):
                 for local_step, batch in enumerate(pbar):
                     prepared_batch = self.prepare_batch(batch)
                     try:
@@ -410,6 +410,8 @@ class Runner:
                     if is_saving:
                         self.saver.buffer(model, self.optimizers, self.scaler)
                         self.saver.dump()
+
+                self.saver.buffer(model, self.optimizers, self.scaler)
 
         self.exit("finished")
 
