@@ -69,7 +69,7 @@ class Runner(torchzq.Runner):
         metrics.add_metric("val_loss", [early_stop])
         return metrics
 
-    def prepare_batch(self, batch):
+    def prepare_batch(self, batch, _):
         x, y = batch
         x = x.to(self.args.device)
         y = y.to(self.args.device)

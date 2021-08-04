@@ -247,7 +247,7 @@ class Runner:
         for g in optimizer.param_groups:
             g["lr"] = lr
 
-    def prepare_batch(self, batch):
+    def prepare_batch(self, batch, mode):
         return batch
 
     def clip_grad_norm(self, optimizer_idx):
@@ -365,7 +365,7 @@ class Runner:
                 pbar = tqdm.tqdm(self.training_data_loader, desc=desc)
 
                 for local_step, batch in enumerate(pbar):
-                    prepared_batch = self.prepare_batch(batch)
+                    prepared_batch = self.prepare_batch(batch, self.Mode.TRAIN)
                     try:
                         stat_dict = self.training_step_with_optimization(prepared_batch)
                         if self.global_step % args.log_every == 0:
@@ -415,12 +415,12 @@ class Runner:
 
         self.exit("finished")
 
-    def val_test_loop(self, desc, data_loader, step_fn):
+    def val_test_loop(self, desc, data_loader, step_fn, mode):
         self.model.eval()
         pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
         for index, batch in enumerate(pbar):
-            prepared_batch = self.prepare_batch(batch)
+            prepared_batch = self.prepare_batch(batch, mode)
             outputs = default_tuple(step_fn(prepared_batch, index), [{}])
             for k, v in outputs[0].items():
                 stats_dict[k].append(v)
@@ -470,6 +470,7 @@ class Runner:
             + "...",
             self.sanity_check_data_loader if sanity else self.validation_data_loader,
             self.validation_step,
+            self.Mode.VAL,
         )
         stat_dict = {f"val/{k}": v for k, v in stat_dict.items()}
         if stat_dict:
@@ -483,6 +484,7 @@ class Runner:
             f"Testing epoch {self.current_epoch} ...",
             self.testing_data_loader,
             self.testing_step,
+            self.Mode.TEST,
         )
         stat_dict = {f"test/{k}": v for k, v in stat_dict.items()}
         if stat_dict:
