@@ -20,7 +20,7 @@ from enum import Enum
 
 import zouqi
 
-from .typing import Scheduled, _Scheduled, Optional
+from .typing import Scheduled, _Scheduled
 from .saver import Saver
 from .scheduler import Scheduler
 from .interrupt import graceful_interrupt_handler
@@ -29,7 +29,7 @@ from .metric import Metrics
 
 
 class Runner:
-    args: Optional[argparse.Namespace] = None
+    args = argparse.Namespace()
 
     class Mode(Enum):
         TRAIN = 0

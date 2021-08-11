@@ -16,7 +16,7 @@ setup(
     install_requires=[
         "torch>=1.8.0",
         "torchvision>=0.9.0",
-        "zouqi==1.0.9",
+        "zouqi==1.0.10",
         "pyyaml",
         "natsort",
         "tqdm",
