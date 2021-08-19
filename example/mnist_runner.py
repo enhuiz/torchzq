@@ -66,7 +66,7 @@ class Runner(torchzq.Runner):
                 # the metric does not go down for the latest two validations
                 self.args.max_epochs = -1  # this terminates the training
 
-        metrics.add_metric("val_loss", [early_stop])
+        metrics.add_metric("val/nll_loss", [early_stop])
         return metrics
 
     def prepare_batch(self, batch, _):

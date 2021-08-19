@@ -20,6 +20,7 @@ from enum import Enum
 
 import zouqi
 
+from .version import __version__
 from .typing import Scheduled, _Scheduled
 from .saver import Saver
 from .scheduler import Scheduler
@@ -55,6 +56,7 @@ class Runner:
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
+        self.args.version = self.version
 
     ##############
     # Read-onlys #
@@ -63,6 +65,10 @@ class Runner:
     @property
     def name(self):
         return self.args.name
+
+    @property
+    def version(self):
+        return f"{__name__}-{__version__}"
 
     @property
     def run_dir(self):
@@ -445,7 +451,7 @@ class Runner:
     ):
         args = self.args
 
-        tmpl = "{} not set, are your sure to skip {}? (y/n): "
+        tmpl = "{} not set, are you sure to skip {}? (y/n): "
 
         if validate_every_epochs is None and validate_every_steps is None:
             if input(tmpl.format("validate_every_*", "validation")) != "y":
