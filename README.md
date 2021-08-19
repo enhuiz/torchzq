@@ -1,4 +1,4 @@
-# TorchZQ: A PyTorch experiment runner based on [Zouqi](https://github.com/enhuiz/zouqi)
+# TorchZQ: A PyTorch experiment runner built with [zouqi](https://github.com/enhuiz/zouqi)
 
 ## Installation
 
@@ -97,26 +97,28 @@ if __name__ == "__main__":
 **Training**
 
 ```
-$ tzq example/config/mnist.yml train
+tzq example/config/mnist.yml train
 ```
 
 **Testing**
 
 ```
-$ tzq example/config/mnist.yml test
+tzq example/config/mnist.yml test
 ```
 
-**TensorBoard**
+**Weights & Biases**
+
+Before you run, login [Weights & Biases](https://docs.wandb.ai/quickstart) first.
 
 ```
-$ tensorboard --logdir runs
+pip install wandb # install weight & bias client
+wandb login       # login
 ```
 
 ## Supported Features
 
 - [x] Model checkpoints
-- [x] Logging
+- [x] Logging (Weights & Biases)
 - [x] Gradient accumulation
 - [x] Configuration file
-- [x] TensorBoard
 - [x] FP16

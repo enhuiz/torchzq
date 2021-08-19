@@ -1,70 +1,41 @@
+import argparse
+import tqdm
 import time
 import yaml
 import sys
 import os
 import shutil
-import numbers
 import numpy as np
 import random
 import torch
 import torch.nn as nn
-import signal
+import wandb
 from pathlib import Path
 from collections import defaultdict
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
-from functools import partial
+from functools import partial, cached_property
 from collections import defaultdict
+from itertools import islice
+from enum import Enum
 
 import zouqi
 
-from .typing import Flag, Scheduled, _Scheduled
+from .version import __version__
+from .typing import Scheduled, _Scheduled
 from .saver import Saver
 from .scheduler import Scheduler
-from .pbar import ProgressBar
-from .utils import print_directory_tree
 from .interrupt import graceful_interrupt_handler
+from .utils import print_directory_tree, default_tuple
+from .metric import Metrics
 
 
-def immutable(name):
-    def getter(self):
-        return getattr(self, "__" + name, None)
-
-    def setter(self, x):
-        assert getter(self) == None, "Immutable variable cannot be set twice!"
-        setattr(self, "__" + name, x)
-
-    return property(getter, setter)
-
-
-def delegate(delegate_cls, name):
-    attrs = set(delegate_cls.__dict__.keys())
-
-    def wrapped(cls):
-        nonexist_attrs = attrs - set(cls.__dict__.keys())
-        for attr in nonexist_attrs:
-            getsrc = lambda self: getattr(self, name)
-            getter = lambda self, attr=attr: getattr(getsrc(self), attr)
-            setter = lambda self, x, attr=attr: setattr(getsrc(self), attr, x)
-            setattr(cls, attr, property(getter, setter))
-        return cls
-
-    return wrapped
-
-
-class Mode(str):
-    logger = immutable("logger")
-    data_loader = immutable("data_loader")
-
-
-@delegate(Mode, "mode")
 class Runner:
-    model = immutable("model")
-    saver = immutable("saver")
-    optimizers = immutable("optimizers")
-    scheduler = immutable("scheduler")
-    scaler = immutable("scaler")
-    args = immutable("args")
+    args = argparse.Namespace()
+
+    class Mode(Enum):
+        TRAIN = 0
+        TEST = 1
+        VAL = 2
 
     def __init__(
         self,
@@ -72,252 +43,279 @@ class Runner:
         batch_size: int = 32,
         nj: int = min(os.cpu_count(), 12),
         device: str = "cuda",
-        strict_loading: bool = True,
+        strict_loading: bool = False,
         runs_root: Path = Path("runs"),
-        quiet: Flag = False,
         use_fp16: bool = False,
         ckpt: Path = None,
         lr: Scheduled = "1e-3",
-        from_scratch: Flag = False,
         seed: int = 0,
+        wandb_project: str = "",
+        ckpt_namespace: str = "default",
+        log_every: int = 10,
     ):
-        self.modes = []
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
+        self.args.version = self.version
 
-    @property
-    def mode(self):
-        if len(self.modes) == 0:
-            raise RuntimeError('No mode has been set, call "self.switch_mode()" first.')
-        return self.modes[0]
+    ##############
+    # Read-onlys #
+    ##############
 
     @property
     def name(self):
         return self.args.name
 
     @property
-    def dataset(self):
-        return self.data_loader.dataset
-
-    @property
-    def training(self):
-        return self.mode == "train"
-
-    @property
-    def ckpt(self):
-        args = self.args
-        if args.ckpt is not None:
-            return args.ckpt
-        if not args.from_scratch:
-            return self.saver.latest_ckpt
-        return None
+    def version(self):
+        return f"{__name__}-{__version__}"
 
     @property
     def run_dir(self):
         return self.args.runs_root / self.name
 
     @property
-    def logs_dir(self):
-        return self.run_dir / "logs" / self.mode
-
-    @property
     def ckpt_dir(self):
         return self.run_dir / "ckpts"
-
-    @property
-    def events(self):
-        return self.mode.events
 
     @property
     def autocast_if_use_fp16(self):
         return partial(torch.cuda.amp.autocast, enabled=self.args.use_fp16)
 
     @property
-    def batch_size(self):
-        return self.args.batch_size
+    def state(self):
+        return self.model.state
 
     @property
-    def Dataset(self):
-        raise NotImplementedError
+    def global_step(self):
+        return self.state.step
+
+    @property
+    def current_epoch(self):
+        return self.state.epoch
+
+    @property
+    def Optimizer(self):
+        return torch.optim.Adam
 
     @property
     def DataLoader(self):
         return DataLoader
 
-    @staticmethod
-    def set_lr(optimizer, lr):
-        for g in optimizer.param_groups:
-            g["lr"] = lr
+    @property
+    def lr_coef(self):
+        return 1
 
-    @staticmethod
-    def get_lr(optimizer):
-        return optimizer.param_groups[0]["lr"]
+    ############
+    # Settable #
+    ############
 
-    def create_scheduler(self):
+    @property
+    def backward_counter(self):
+        return getattr(self, "_backward_counter", 0)
+
+    @backward_counter.setter
+    def backward_counter(self, value):
+        self._backward_counter = value
+
+    ########
+    # Lazy #
+    ########
+
+    @cached_property
+    def logger(self):
+        args = self.args
+        wandb.init(config=args, project=args.wandb_project, group=self.name)
+        return wandb
+
+    @cached_property
+    def saver(self):
+        return Saver(self.ckpt_dir, self.args.strict_loading)
+
+    @cached_property
+    def scheduler(self):
         scheduler = Scheduler()
         for k, v in list(vars(self.args).items()):
             if isinstance(v, _Scheduled):
                 setattr(self.args, k, scheduler.schedule(v))
         return scheduler
 
-    def create_dataset(self):
+    @cached_property
+    def training_data_loader(self):
+        return self.create_data_loader(self.Mode.TRAIN)
+
+    @cached_property
+    def validation_data_loader(self):
+        return self.create_data_loader(self.Mode.VAL)
+
+    @cached_property
+    def testing_data_loader(self):
+        return self.create_data_loader(self.Mode.TEST)
+
+    @cached_property
+    def sanity_check_data_loader(self):
+        return list(islice(self.validation_data_loader, 3))
+
+    @cached_property
+    def metrics(self):
+        return self.create_metrics()
+
+    @cached_property
+    def model(self):
+        args = self.args
+        saver = self.saver
+        scheduler = self.scheduler
+        model = self.create_model()
+        model.to(args.device)
+        model.metrics = self.metrics
+        saver.load(
+            model=model,
+            namespace=args.ckpt_namespace,
+            path=args.ckpt,
+        )
+        scheduler.step(
+            current_epoch=model.state.epoch,
+            global_step=model.state.step,
+        )
+        return model
+
+    @cached_property
+    def optimizers(self):
+        args = self.args
+        optimizers = self.create_optimizers()
+        if len(optimizers) == 0:
+            raise ValueError("There should be at least 1 optimizer but get 0.")
+        for optimizer in optimizers:
+            for d in optimizer.state.values():
+                for k, v in d.items():
+                    if torch.is_tensor(v):
+                        d[k] = v.to(args.device)
+        self.saver.load(
+            optimizers=optimizers,
+            namespace=args.ckpt_namespace,
+            path=args.ckpt,
+        )
+        return optimizers
+
+    @cached_property
+    def scaler(self):
+        args = self.args
+        if args.use_fp16:
+            scaler = torch.cuda.amp.GradScaler()
+            self.saver.load(
+                scaler=scaler,
+                namespace=args.ckpt_namespace,
+                path=args.ckpt,
+            )
+        else:
+            scaler = None
+        return scaler
+
+    ############
+    # Creators #
+    ############
+
+    def create_dataset(self, mode: Mode):
         raise NotImplementedError
 
-    def create_data_loader(self, **kwargs):
+    def create_data_loader(self, mode: Mode):
         args = self.args
-        dataset = self.create_dataset()
+        dataset = self.create_dataset(mode)
         data_loader = self.DataLoader(
             dataset=dataset,
-            batch_size=self.batch_size,
+            batch_size=args.batch_size,
             num_workers=args.nj,
-            **kwargs,
+            shuffle=mode == self.Mode.TRAIN,
+            drop_last=mode == self.Mode.TRAIN,
         )
         print("Dataset size:", len(dataset))
         return data_loader
+
+    def create_metrics(self):
+        return Metrics()
 
     def create_model(self):
         raise NotImplementedError
 
     def create_optimizers(self):
+        self.scheduler
         args = self.args
-        optimizer = torch.optim.Adam(params=self.model.parameters(), lr=1)
-        args.lr.add_listeners(lambda lr: self.set_lr(optimizer, lr))
+        optimizer = self.Optimizer(params=self.model.parameters(), lr=1)
+        args.lr.add_listener(lambda lr: self.set_lr(optimizer, self.lr_coef * lr))
         return [optimizer]
 
-    def prepare_saver(self):
-        args = self.args
-        if self.saver is None:
-            self.saver = Saver(self.ckpt_dir, args.strict_loading)
-
-    def prepare_logger(self):
-        if self.logger is None:
-            self.logger = SummaryWriter(self.logs_dir)
-
-    def prepare_data_loader(self):
-        # data_loader should be before the model
-        if self.data_loader is None:
-            self.data_loader = self.create_data_loader(
-                shuffle=self.training, drop_last=self.training
-            )
-
-    def prepare_scheduler(self):
-        # scheduler should be before the model
-        if self.scheduler is None:
-            self.scheduler = self.create_scheduler()
-
-    def prepare_model(self):
-        args = self.args
-        if self.model is None:
-            self.model = self.create_model()
-            self.model.to(args.device)
-            self.model.epoch = 0
-            self.model.iteration = 0
-            self.saver.load(self.ckpt, model=self.model)
-            self.scheduler.step(epoch=self.model.epoch, iteration=self.model.iteration)
-
-    def prepare_optimizer(self):
-        args = self.args
-        if self.optimizers is None:
-            self.optimizers = self.create_optimizers()
-            if len(self.optimizers) == 0:
-                raise ValueError("There should be at least 1 optimizer but get 0.")
-            for optimizer in self.optimizers:
-                for state in optimizer.state.values():
-                    for k, v in state.items():
-                        if torch.is_tensor(v):
-                            state[k] = v.to(args.device)
-            self.saver.load(self.ckpt, optimizers=self.optimizers)
-
-    def prepare_scaler(self):
-        args = self.args
-        if self.scaler is None and args.use_fp16:
-            self.scaler = torch.cuda.amp.GradScaler()
-            self.saver.load(self.ckpt, scaler=self.scaler)
+    #########
+    # Misc. #
+    #########
 
     @staticmethod
-    def run_pipeline(*stages):
-        for stage in stages:
-            for func in stage:
-                func()
+    def set_lr(optimizer, lr):
+        for g in optimizer.param_groups:
+            g["lr"] = lr
 
-    def prepare_all(self):
-        self.run_pipeline(
-            [self.prepare_saver, self.prepare_scheduler],
-            [self.prepare_data_loader],
-            [self.prepare_model],
-            [self.prepare_optimizer, self.prepare_scaler],
-            [self.prepare_logger],
+    def prepare_batch(self, batch, mode):
+        return batch
+
+    def clip_grad_norm(self, optimizer_idx):
+        args = self.args
+        msg = "If you have more than one optimizers, please override clip_grad_norm()."
+        assert optimizer_idx < 1, msg
+        return nn.utils.clip_grad_norm_(
+            self.model.parameters(),
+            args.grad_clip_thres or 1e9,
         )
 
-    def switch_mode(self, name):
-        """
-        Switch running mode.
-        """
-        # the first element in self.modes will be treated as the current mode
-        if name in self.modes:
-            i = self.modes.index(name)
-            self.modes[0], self.modes[i] = self.modes[i], self.modes[0]
-        else:
-            self.modes.insert(0, Mode(name))
-            self.prepare_all()
-        if self.training:
-            self.model.train()
-        elif self.model is not None:
-            self.model.eval()
+    #########
+    # Steps #
+    #########
 
     def training_step(self, batch, optimizer_idx: int) -> tuple[torch.Tensor, dict]:
         raise NotImplementedError
 
-    def validation_step(self, batch, batch_idx: int) -> dict:
-        stat_dict = {}
-        for i in range(len(self.optimizers)):
-            stat_dict.update(self.training_step(batch, i)[1])
-        return stat_dict
-
-    def testing_step(self, batch, batch_idx: int) -> dict:
-        raise NotImplementedError
-
     def training_step_with_optimization(self, batch) -> dict:
         args = self.args
-        model = self.model
+        state = self.state
+
         stat_dict = {}
         start_time = time.time()
 
-        model.iteration += 1
-        self.scheduler.step(model.epoch, model.iteration)
+        self.backward_counter += 1
+        state.step += self.backward_counter % args.update_every_backwards == 0
 
-        for optimizer_idx, optimizer in enumerate(self.optimizers):
+        self.scheduler.step(
+            current_epoch=self.current_epoch,
+            global_step=self.global_step,
+        )
+
+        for i, optimizer in enumerate(self.optimizers):
             with self.autocast_if_use_fp16():
-                outputs = self.training_step(batch, optimizer_idx)
+                outputs = default_tuple(self.training_step(batch, i), [None, {}])
 
-            if isinstance(outputs, torch.Tensor):
-                loss = outputs
-            else:
-                loss = outputs[0]
-                stat_dict.update(outputs[1])
+            loss = outputs[0]
+            stat_dict.update(outputs[1])
 
-            if args.use_fp16:
-                self.scaler.scale(loss / args.update_every).backward()
-            else:
-                (loss / args.update_every).backward()
+            if loss is not None:
+                if args.use_fp16:
+                    self.scaler.scale(loss / args.update_every_backwards).backward()
+                else:
+                    (loss / args.update_every_backwards).backward()
 
-            if model.iteration % args.update_every == 0:
+            if self.backward_counter % args.update_every_backwards == 0:
                 if args.use_fp16:
                     self.scaler.unscale_(optimizer)
 
-                grad_norm = nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
-                    args.grad_clip_thres or 1e9,
-                )
+                grad_norm = self.clip_grad_norm(i)
 
-                stat_dict[f"grad_norm_{optimizer_idx}"] = grad_norm.item()
+                stat_dict[f"grad_norm_{i}"] = grad_norm.item()
 
-                if args.use_fp16:
-                    self.scaler.step(optimizer)
-                    self.scaler.update()
+                if grad_norm.isfinite():
+                    if args.use_fp16:
+                        self.scaler.step(optimizer)
+                        self.scaler.update()
+                    else:
+                        optimizer.step()
                 else:
-                    optimizer.step()
+                    print("Warning: grad_norm is not finite. Skip optimization.")
 
                 optimizer.zero_grad()
 
@@ -325,41 +323,63 @@ class Runner:
 
         return stat_dict
 
-    def training_loop(self):
-        if not self.training:
-            print("Warning: You are calling training loop in non-training mode!")
+    def validation_step(self, batch, batch_idx: int) -> dict:
+        stat_dict = {}
+        for i in range(len(self.optimizers)):
+            outputs = default_tuple(self.training_step(batch, i), [None, {}])
+            stat_dict.update(outputs[1])
+        return stat_dict
 
+    def testing_step(self, batch, batch_idx: int) -> dict:
+        raise NotImplementedError
+
+    def exit(self, reason):
+        self.saver.buffer(self.model, self.optimizers, self.scaler, reason)
+        self.saver.dump_all()
+        sys.exit(0)
+
+    #########
+    # Loops #
+    #########
+
+    def training_loop(self):
         args = self.args
-        model = self.model
+
         logger = self.logger
 
-        while model.epoch < args.max_epochs:
-            model.epoch += 1
-            desc = f"Train: {model.epoch}/{args.max_epochs}"
-            pbar = ProgressBar(self.data_loader, args.quiet, desc=desc)
+        # run sanity check before every training loop
+        sanity_stat_dict = self.validate(sanity=True)
 
-            def interrupt_callback(signum):
-                pbar.close()
-                print("Trying to gracefully shutdown ...")
-                self.saver.dump()
-                if signum == signal.SIGQUIT:
-                    self.saver.save(model, self.optimizers, self.scaler)
-                sys.exit(0)
+        # run metrics once before loop for sanity checking and state restoring
+        # pass None to avoid updating the original value
+        self.metrics({k: None for k in sanity_stat_dict})
+        log_dict = self.metrics.to_dict()
+        log_dict["epoch"] = self.current_epoch
+        logger.log(log_dict, self.global_step)
 
-            with graceful_interrupt_handler(callback=interrupt_callback):
-                for batch in pbar:
+        model = self.model.train()
+        state = self.state
+
+        def interrupt_callback(signum):
+            print("Trying to gracefully shutdown ...")
+            self.exit("interrupt")
+
+        with graceful_interrupt_handler(callback=interrupt_callback):
+            while self.current_epoch < args.max_epochs:
+                state.epoch += 1
+                desc = f"Train: {self.current_epoch}/{args.max_epochs}"
+                pbar = tqdm.tqdm(self.training_data_loader, desc=desc)
+
+                for local_step, batch in enumerate(pbar):
+                    prepared_batch = self.prepare_batch(batch, self.Mode.TRAIN)
                     try:
-                        stat_dict = self.training_step_with_optimization(batch)
-                        pbar.update_line(0, f"iteration: {model.iteration}", "{v}")
-                        for key, val in stat_dict.items():
-                            pbar.update_line(key, val)
-                        if model.iteration % args.log_every == 0:
-                            for key, val in stat_dict.items():
-                                logger.add_scalar(key, val, model.iteration)
-                            logger.flush()
+                        stat_dict = self.training_step_with_optimization(prepared_batch)
+                        if self.global_step % args.log_every == 0:
+                            stat_dict = {f"train/{k}": v for k, v in stat_dict.items()}
+                            logger.log(stat_dict, self.global_step)
                     except RuntimeError as e:
                         if "out of memory" in str(e):
-                            pbar.update_line(0, "OOM! Skip batch.", "{v}")
+                            pbar.set_description("OOM! Skip batch.")
                             for p in model.parameters():
                                 if p.grad is not None:
                                     del p.grad  # free some memory
@@ -367,78 +387,116 @@ class Runner:
                             continue
                         else:
                             raise e
-                pbar.close()
-                self.saver.buffer(model, self.optimizers, self.scaler)
-                if model.epoch % args.save_every == 0:
-                    self.saver.dump()
-                if model.epoch % args.validate_every == 0:
-                    self.validate()
-                    self.switch_mode("train")
 
-    def val_test_loop(self, desc, step, sanity_check=False):
-        args = self.args
-        model = self.model
-        data_loader = self.data_loader
-        if sanity_check:
-            data_loader = [batch for batch, _ in zip(data_loader, range(3))]
-        pbar = ProgressBar(data_loader, args.quiet, desc=desc)
+                    is_validating = (
+                        args.validate_every_steps is not None
+                        and self.global_step % args.validate_every_steps == 0
+                    ) or (
+                        args.validate_every_epochs is not None
+                        and local_step == pbar.total - 1
+                        and self.current_epoch % args.validate_every_epochs == 0
+                    )
+
+                    if is_validating:
+                        self.metrics(self.validate())
+                        log_dict = self.metrics.to_dict()
+                        log_dict["epoch"] = self.current_epoch
+                        logger.log(log_dict, self.global_step)
+                        model.train()
+
+                    is_saving = (
+                        args.save_every_steps is not None
+                        and self.global_step % args.save_every_steps == 0
+                    ) or (
+                        args.save_every_epochs is not None
+                        and local_step == pbar.total - 1
+                        and self.current_epoch % args.save_every_epochs == 0
+                    )
+
+                    if is_saving:
+                        self.saver.buffer(model, self.optimizers, self.scaler)
+                        self.saver.dump()
+
+                self.saver.buffer(model, self.optimizers, self.scaler)
+
+        self.exit("finished")
+
+    def val_test_loop(self, desc, data_loader, step_fn, mode):
+        self.model.eval()
+        pbar = tqdm.tqdm(data_loader, desc=desc)
         stats_dict = defaultdict(list)
         for index, batch in enumerate(pbar):
-            stat_dict = step(batch, index)
-            for key, val in (stat_dict or {}).items():
-                pbar.update_line(key, val)
-                if isinstance(val, numbers.Number):
-                    stats_dict[key].append(val)
-        for key, val in stats_dict.items():
-            mean = sum(val) / len(val)
-            self.logger.add_scalar(key, mean, model.epoch)
-            print(f"Average {key}: {mean:.4g}.")
-        self.logger.flush()
+            prepared_batch = self.prepare_batch(batch, mode)
+            outputs = default_tuple(step_fn(prepared_batch, index), [{}])
+            for k, v in outputs[0].items():
+                stats_dict[k].append(v)
+        stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
+        return stat_dict
+
+    ############
+    # Commands #
+    ############
 
     @zouqi.command
     def train(
         self,
         weight_decay: float = 0,
         max_epochs: int = 100,
-        save_every: int = 1,
-        validate_every: int = None,
-        update_every: int = 1,
-        log_every: int = 10,
+        save_every_epochs: int = None,
+        save_every_steps: int = None,
+        validate_every_epochs: int = None,
+        validate_every_steps: int = None,
+        update_every_backwards: int = 1,
         grad_clip_thres: float = 1.0,
     ):
         args = self.args
-        if validate_every is None:
-            args.validate_every = save_every
+
+        tmpl = "{} not set, are you sure to skip {}? (y/n): "
+
+        if validate_every_epochs is None and validate_every_steps is None:
+            if input(tmpl.format("validate_every_*", "validation")) != "y":
+                exit()
+
+        if save_every_epochs is None and save_every_steps is None:
+            if input(tmpl.format("save_every_*", "saving")) != "y":
+                exit()
 
         self.run_dir.mkdir(parents=True, exist_ok=True)
         time_str = time.strftime("%Y%m%dT%H%M%S")
         with open(self.run_dir / f"config-{time_str}.yml", "w") as f:
             yaml.dump(vars(args), f)
 
-        self.switch_mode("validate")
-        self.val_test_loop(
-            "Validation loop sanity checking ...",
-            self.validation_step,
-            sanity_check=True,
-        )
-        self.switch_mode("train")
-        self.training_loop()
+        return self.training_loop()
 
     @zouqi.command
-    def validate(self):
-        self.switch_mode("validate")
-        self.val_test_loop(
-            f"Validating epoch {self.model.epoch} ...",
+    def validate(self, sanity: bool = False):
+        stat_dict = self.val_test_loop(
+            f"Validating epoch {self.current_epoch} "
+            + ("(sanity checking) " if sanity else "")
+            + "...",
+            self.sanity_check_data_loader if sanity else self.validation_data_loader,
             self.validation_step,
+            self.Mode.VAL,
         )
+        stat_dict = {f"val/{k}": v for k, v in stat_dict.items()}
+        if stat_dict:
+            stat_dict["epoch"] = self.current_epoch
+            self.logger.log(stat_dict, self.global_step)
+        return stat_dict
 
     @zouqi.command
     def test(self):
-        self.switch_mode("test")
-        self.val_test_loop(
-            f"Testing epoch {self.model.epoch} ...",
+        stat_dict = self.val_test_loop(
+            f"Testing epoch {self.current_epoch} ...",
+            self.testing_data_loader,
             self.testing_step,
+            self.Mode.TEST,
         )
+        stat_dict = {f"test/{k}": v for k, v in stat_dict.items()}
+        if stat_dict:
+            stat_dict["epoch"] = self.current_epoch
+            self.logger.log(stat_dict, self.global_step)
+        return stat_dict
 
     @staticmethod
     def try_rmtree(path):

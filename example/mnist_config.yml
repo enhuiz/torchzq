@@ -3,5 +3,5 @@ name: mnist
 runner: example/mnist_runner.py
 
 train:
-  lr: "Lambda(lambda epoch: 0.001 * 0.95**epoch, epochwise=True)"
+  lr: "Lambda(lambda epoch: 0.001 * 0.95**epoch)"
   use_fp16: true

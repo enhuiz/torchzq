@@ -1,18 +1,18 @@
+import torch
 from pathlib import Path
 from natsort import natsorted
 
 
-class EMAMeter:
-    def __init__(self, decay=0.98):
-        self.decay = decay
-        self.value = None
+class ItemProperty:
+    def __set_name__(self, owner, name):
+        self.private_name = "_" + name
 
-    def __call__(self, value):
-        if self.value is None:
-            self.value = value
-        else:
-            self.value = self.decay * self.value + (1 - self.decay) * value
-        return self.value
+    def __get__(self, obj, objtype=None):
+        return getattr(obj, self.private_name).item()
+
+    def __set__(self, obj, value):
+        value = torch.full_like(getattr(obj, self.private_name), value)
+        setattr(obj, self.private_name, value)
 
 
 def print_directory_tree(root: Path, prefix: str = ""):
@@ -27,3 +27,13 @@ def print_directory_tree(root: Path, prefix: str = ""):
                 print_directory_tree(path, base + "├── ")
             else:
                 print_directory_tree(paths[-1], base + "└── ")
+
+
+def default_tuple(x, default):
+    if not isinstance(x, tuple):
+        x = [x]
+    else:
+        x = list(x)
+    for i in range(len(default) - len(x), len(default)):
+        x.append(default[i])
+    return tuple(x)
