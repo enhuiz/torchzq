@@ -8,4 +8,4 @@ __pycache__
 build
 runs
 wandb
-torchzq/version
+torchzq/version.py
