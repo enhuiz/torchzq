@@ -153,7 +153,9 @@ class Runner(ABC):
 
     @cached_property
     def metrics(self):
-        return self.create_metrics()
+        metrics = self.create_metrics()
+        self.init_ckpt.load_metrics(metrics)
+        return metrics
 
     @cached_property
     def init_ckpt(self):
@@ -170,7 +172,6 @@ class Runner(ABC):
         scheduler = self.scheduler
         model = self.create_model()
         model.to(args.device)
-        model.metrics = self.metrics
         self.init_ckpt.load_model(model)
         scheduler.step(
             current_epoch=self.state.epoch,

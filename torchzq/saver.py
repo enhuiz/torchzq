@@ -90,6 +90,7 @@ class Checkpoint:
     model: Optional[OrderedDict] = None
     optimizers: Optional[list[OrderedDict]] = None
     scaler: Optional[OrderedDict] = None
+    metrics: Optional[OrderedDict] = None
 
     @classmethod
     def from_path(cls, path):
@@ -100,6 +101,8 @@ class Checkpoint:
             model=state_dict["model"],
             optimizers=state_dict["optimizers"],
             scaler=state_dict["scaler"],
+            # use get for backward compatibility
+            metrics=state_dict.get("metrics", None),
         )
 
     def info(self, msg):
@@ -107,6 +110,13 @@ class Checkpoint:
 
     def load_state(self):
         return State.from_state_dict(self.state)
+
+    def load_metrics(self, metrics):
+        if self.metrics is not None:
+            metrics.load_state_dict(self.metrics)
+            self.info("metrics loaded.")
+
+        return metrics
 
     def load_model(self, model, strict=False):
         if self.model is None:
@@ -172,6 +182,7 @@ class Checkpoint:
             model=self.model,
             optimizers=self.optimizers,
             scaler=self.scaler,
+            metrics=self.metrics,
         )
 
     def __eq__(self, other):
@@ -202,13 +213,22 @@ class Saver(dict):
         paths = self.list_ckpt_paths(namespace)
         return max(paths, key=lambda p: State.parse(p.stem)[-1], default=None)
 
-    def buffer(self, state, model, optimizers=[], scaler=None, namespace="default"):
+    def buffer(
+        self,
+        state,
+        model,
+        optimizers=[],
+        scaler=None,
+        metrics=None,
+        namespace="default",
+    ):
         self[namespace] = Checkpoint(
             path=state.to_path(self.root / namespace),
+            state=state.state_dict(),
             model=model.state_dict(),
             optimizers=[optimizer.state_dict() for optimizer in optimizers],
             scaler=scaler.state_dict() if scaler else None,
-            state=state.state_dict(),
+            metrics=metrics.state_dict() if metrics else None,
         )
 
     def dump(self, namespace="default"):
