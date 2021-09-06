@@ -233,6 +233,19 @@ class Runner(ABC):
             g["lr"] = lr
 
     def prepare_batch(self, batch, mode):
+        args = self.args
+
+        if isinstance(batch, dict):
+            for k in batch:
+                if isinstance(batch[k], torch.Tensor):
+                    batch[k] = batch[k].to(args.device)
+
+        if isinstance(batch, (tuple, list)):
+            batch = list(batch)
+            for i in range(len(batch)):
+                if isinstance(batch[i], torch.Tensor):
+                    batch[i] = batch[i].to(args.device)
+
         return batch
 
     def clip_grad_norm(self, optimizer_idx):
