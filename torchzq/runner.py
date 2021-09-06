@@ -125,7 +125,7 @@ class Runner(ABC):
 
     @cached_property
     def saver(self):
-        return Saver(self.ckpt_dir, self.args.strict_loading)
+        return Saver(self.ckpt_dir)
 
     @cached_property
     def scheduler(self):
@@ -172,7 +172,7 @@ class Runner(ABC):
         scheduler = self.scheduler
         model = self.create_model()
         model.to(args.device)
-        self.init_ckpt.load_model(model)
+        self.init_ckpt.load_model(model, args.strict_loading)
         scheduler.step(
             current_epoch=self.state.epoch,
             global_step=self.state.step,
@@ -329,7 +329,14 @@ class Runner(ABC):
         raise NotImplementedError
 
     def exit(self, reason):
-        self.saver.buffer(self.state, self.model, self.optimizers, self.scaler, reason)
+        self.saver.buffer(
+            self.state,
+            self.model,
+            self.optimizers,
+            self.scaler,
+            self.metrics,
+            reason,
+        )
         self.saver.dump_all()
         sys.exit(0)
 
@@ -411,11 +418,21 @@ class Runner(ABC):
 
                     if is_saving:
                         self.saver.buffer(
-                            self.state, model, self.optimizers, self.scaler
+                            self.state,
+                            model,
+                            self.optimizers,
+                            self.scaler,
+                            self.metrics,
                         )
                         self.saver.dump()
 
-                self.saver.buffer(self.state, model, self.optimizers, self.scaler)
+                self.saver.buffer(
+                    self.state,
+                    model,
+                    self.optimizers,
+                    self.scaler,
+                    self.metrics,
+                )
 
         self.exit("finished")
 

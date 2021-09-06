@@ -194,9 +194,8 @@ class Saver(dict):
     Saver is a dict maps namespace to checkpoint
     """
 
-    def __init__(self, root, strict: bool = False):
+    def __init__(self, root):
         self.root = Path(root)
-        self.strict = strict
         self._preload()
 
     def _preload(self):
