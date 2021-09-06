@@ -6,10 +6,10 @@ An MNIST example for TorchZQ.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 import torchzq
-from torchzq.metric import Metrics
 
 
 class Net(nn.Module):
@@ -39,14 +39,15 @@ class Net(nn.Module):
 
 
 class Runner(torchzq.Runner):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def create_model(self):
         return Net()
 
-    def create_dataset(self, mode):
-        return datasets.MNIST(
+    def create_dataloader(self, mode: torchzq.Runner.Mode):
+        args = self.args
+        dataset = datasets.MNIST(
             "../data",
             train=mode == "training",
             download=True,
@@ -56,6 +57,13 @@ class Runner(torchzq.Runner):
                     transforms.Normalize((0.1307,), (0.3081,)),
                 ]
             ),
+        )
+        return DataLoader(
+            dataset,
+            batch_size=args.batch_size,
+            num_workers=args.nj,
+            shuffle=mode == mode.TRAIN,
+            drop_last=mode == mode.TRAIN,
         )
 
     def create_metrics(self):

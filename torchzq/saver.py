@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 from pathlib import Path
+from dataclasses import dataclass
+from collections import OrderedDict
+from typing import Optional
 
 from .utils import ItemProperty
 
@@ -26,6 +29,10 @@ def unsafe_load_state_dict(model, state_dict):
 
 
 class State(nn.Module):
+    """
+    The state of the loop engine.
+    """
+
     epoch = ItemProperty()
     step = ItemProperty()
 
@@ -55,6 +62,20 @@ class State(nn.Module):
     def parse_step(cls, s):
         return cls.parse(s)[1]
 
+    @classmethod
+    def from_state_dict(cls, state_dict):
+        if isinstance(state_dict, str):
+            # backward compatibility
+            state = cls.from_string(state_dict)
+        else:
+            state = cls()
+            if state_dict is not None:
+                state.load_state_dict(state_dict)
+        return state
+
+    def to_path(self, root):
+        return (root / str(self)).with_suffix(".ckpt")
+
     def __str__(self):
         return f"epoch={self.epoch}-step={self.step}"
 
@@ -62,106 +83,138 @@ class State(nn.Module):
         return f"State(epoch={self.epoch}, step={self.step})"
 
 
-class Saver:
-    def __init__(self, root, strict: bool = False):
-        self.root = Path(root)
-        self.strict = strict
-        self.buffered = dict()
-        self._preload()
+@dataclass(eq=False, frozen=True)
+class Checkpoint:
+    path: Optional[Path] = None
+    state: Optional[OrderedDict] = None
+    model: Optional[OrderedDict] = None
+    optimizers: Optional[list[OrderedDict]] = None
+    scaler: Optional[OrderedDict] = None
 
-    def _preload(self):
-        for folder in self.root.glob("*"):
-            namespace = folder.name
-            path = self.find_latest_ckpt_path(namespace)
-            if path and path.exists():
-                data = torch.load(path, "cpu")
-                self.buffered[namespace] = data
-                # for compatibility
-                if "state" not in data:
-                    data["state"] = str(State.from_string(path.stem))
+    @classmethod
+    def from_path(cls, path):
+        state_dict = torch.load(path, "cpu")
+        return cls(
+            path=path,
+            state=state_dict["state"],
+            model=state_dict["model"],
+            optimizers=state_dict["optimizers"],
+            scaler=state_dict["scaler"],
+        )
 
-    def _get_ckpt_path(self, namespace, stem):
-        return (self.root / namespace / stem).with_suffix(".ckpt")
+    def info(self, msg):
+        print(f"ckpt@{self.path}: {msg}")
 
-    def find_ckpt_paths(self, namespace="default"):
-        return list((self.root / namespace).glob("*.ckpt"))
+    def load_state(self):
+        return State.from_state_dict(self.state)
 
-    def find_latest_ckpt_path(self, namespace):
-        paths = self.find_ckpt_paths(namespace)
-        return max(paths, key=lambda p: State.parse(p.stem)[-1], default=None)
+    def load_model(self, model, strict=False):
+        if self.model is None:
+            return
 
-    def load(
-        self,
-        model=None,
-        optimizers=[],
-        scaler=None,
-        namespace="default",
-        path=None,
-    ):
-        if path is None:
-            if namespace not in self.buffered:
-                msg = f"No checkpoint found in {self.root / namespace}."
-                if namespace is not "default":
-                    # strict checking for non-default namespace
-                    raise FileNotFoundError(msg)
-                if model is not None:
-                    model.state = State()
-                print(msg, "Not loading.")
-                return
-
-            data = self.buffered[namespace]
+        if strict:
+            model.load_state_dict(self.model)
         else:
-            data = torch.load(path, "cpu")
+            unsafe_load_state_dict(model, self.model)
 
-        if model is not None:
-            if self.strict:
-                model.load_state_dict(data["model"])
-            else:
-                unsafe_load_state_dict(model, data["model"])
-            model.state = State.from_string(data["state"])
-            print(f"{self._get_ckpt_path(namespace, str(model.state))} loaded.")
+        self.info("model loaded.")
 
-        state_dicts = data.get("optimizers", [])
+        return model
 
-        for i, (optimizer, state_dict) in enumerate(zip(optimizers, state_dicts)):
+    def load_optimizers(self, optimizers):
+        if self.optimizers is None:
+            return
+
+        for i, (optimizer, state_dict) in enumerate(zip(optimizers, self.optimizers)):
             try:
                 optimizer.load_state_dict(state_dict)
                 # sanity check
                 optimizer.zero_grad()
                 optimizer.step()
-                print(f"Optimizer loaded.")
+                self.info(f"optimizer {i} loaded.")
             except Exception as e:
-                print(e)
-                print(f"Warning: fail to load state dict for optimizer {i}.")
+                self.info(f"failed to load state dict for optimizer {i}, skip.")
+                self.info(e)
 
-        if scaler is not None:
-            try:
-                scaler.load_state_dict(data["scaler"])
-                print(f"Scaler loaded.")
-            except Exception as e:
-                print(e)
-                print("Warning: loading scaler state dict failed.")
+        return optimizers
 
-    def buffer(self, model, optimizers=[], scaler=None, namespace="default"):
-        state = model.state
-        del model.state
-        self.buffered[namespace] = dict(
+    def load_scaler(self, scaler):
+        if self.scaler is None:
+            return
+
+        try:
+            scaler.load_state_dict(self.scaler)
+            self.info("scaler loaded.")
+        except Exception as e:
+            self.info("failed to load scaler state dict.")
+            self.info(e)
+
+        return scaler
+
+    def dump(self):
+        if self.path is None:
+            raise ValueError(f"{self} is not dumpable.")
+
+        if self.path.exists():
+            # skip dump to avoid overwriting existing checkpoint.
+            return
+
+        state = State.from_state_dict(self.state)
+
+        if state.step > 0:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(self.state_dict(), self.path)
+            self.info(f"dumped.")
+
+    def state_dict(self):
+        return dict(
+            state=self.state,
+            model=self.model,
+            optimizers=self.optimizers,
+            scaler=self.scaler,
+        )
+
+    def __eq__(self, other):
+        return self.path == other.path
+
+
+class Saver(dict):
+    """
+    Saver is a dict maps namespace to checkpoint
+    """
+
+    def __init__(self, root, strict: bool = False):
+        self.root = Path(root)
+        self.strict = strict
+        self._preload()
+
+    def _preload(self):
+        for folder in self.root.glob("*"):
+            namespace = folder.name
+            path = self.get_latest_ckpt_path(namespace)
+            if path and path.exists():
+                self[namespace] = Checkpoint.from_path(path)
+
+    def list_ckpt_paths(self, namespace="default"):
+        return list((self.root / namespace).glob("*.ckpt"))
+
+    def get_latest_ckpt_path(self, namespace):
+        paths = self.list_ckpt_paths(namespace)
+        return max(paths, key=lambda p: State.parse(p.stem)[-1], default=None)
+
+    def buffer(self, state, model, optimizers=[], scaler=None, namespace="default"):
+        self[namespace] = Checkpoint(
+            path=state.to_path(self.root / namespace),
             model=model.state_dict(),
             optimizers=[optimizer.state_dict() for optimizer in optimizers],
             scaler=scaler.state_dict() if scaler else None,
-            state=str(state),
+            state=state.state_dict(),
         )
-        model.state = state
 
     def dump(self, namespace="default"):
-        data = self.buffered[namespace]
-        if State.parse_step(data["state"]) > 0:
-            path = self._get_ckpt_path(namespace, data["state"])
-            path.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(data, path)
-            print(f"{path} dumped.")
-        del self.buffered[namespace]
+        self[namespace].dump()
+        del self[namespace]
 
     def dump_all(self):
-        for namespace in list(self.buffered):
+        for namespace in list(self):
             self.dump(namespace)

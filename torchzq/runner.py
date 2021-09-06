@@ -1,3 +1,4 @@
+import zouqi
 import argparse
 import tqdm
 import time
@@ -12,24 +13,22 @@ import torch.nn as nn
 import wandb
 from pathlib import Path
 from collections import defaultdict
-from torch.utils.data import DataLoader
 from functools import partial, cached_property
 from collections import defaultdict
 from itertools import islice
 from enum import Enum
-
-import zouqi
+from abc import ABC, abstractmethod
 
 from .version import __version__
-from .typing import Scheduled, _Scheduled
-from .saver import Saver
+from .typing import Optional, Scheduled, _Scheduled
+from .saver import Checkpoint, Saver
 from .scheduler import Scheduler
 from .interrupt import graceful_interrupt_handler
 from .utils import print_directory_tree, default_tuple
 from .metric import Metrics
 
 
-class Runner:
+class Runner(ABC):
     args = argparse.Namespace()
 
     class Mode(Enum):
@@ -82,9 +81,9 @@ class Runner:
     def autocast_if_use_fp16(self):
         return partial(torch.cuda.amp.autocast, enabled=self.args.use_fp16)
 
-    @property
+    @cached_property
     def state(self):
-        return self.model.state
+        return self.init_ckpt.load_state()
 
     @property
     def global_step(self):
@@ -97,10 +96,6 @@ class Runner:
     @property
     def Optimizer(self):
         return torch.optim.Adam
-
-    @property
-    def DataLoader(self):
-        return DataLoader
 
     @property
     def lr_coef(self):
@@ -141,41 +136,45 @@ class Runner:
         return scheduler
 
     @cached_property
-    def training_data_loader(self):
-        return self.create_data_loader(self.Mode.TRAIN)
+    def training_dataloader(self):
+        return self.create_dataloader(self.Mode.TRAIN)
 
     @cached_property
-    def validation_data_loader(self):
-        return self.create_data_loader(self.Mode.VAL)
+    def validation_dataloader(self):
+        return self.create_dataloader(self.Mode.VAL)
 
     @cached_property
-    def testing_data_loader(self):
-        return self.create_data_loader(self.Mode.TEST)
+    def testing_dataloader(self):
+        return self.create_dataloader(self.Mode.TEST)
 
     @cached_property
-    def sanity_check_data_loader(self):
-        return list(islice(self.validation_data_loader, 3))
+    def sanity_check_dataloader(self):
+        return list(islice(self.validation_dataloader, 3))
 
     @cached_property
     def metrics(self):
         return self.create_metrics()
 
     @cached_property
+    def init_ckpt(self):
+        args = self.args
+        if args.ckpt is None:
+            ckpt = self.saver.get(args.ckpt_namespace, Checkpoint())
+        else:
+            ckpt = Checkpoint.from_path(args.ckpt)
+        return ckpt
+
+    @cached_property
     def model(self):
         args = self.args
-        saver = self.saver
         scheduler = self.scheduler
         model = self.create_model()
         model.to(args.device)
         model.metrics = self.metrics
-        saver.load(
-            model=model,
-            namespace=args.ckpt_namespace,
-            path=args.ckpt,
-        )
+        self.init_ckpt.load_model(model)
         scheduler.step(
-            current_epoch=model.state.epoch,
-            global_step=model.state.step,
+            current_epoch=self.state.epoch,
+            global_step=self.state.step,
         )
         return model
 
@@ -190,11 +189,7 @@ class Runner:
                 for k, v in d.items():
                     if torch.is_tensor(v):
                         d[k] = v.to(args.device)
-        self.saver.load(
-            optimizers=optimizers,
-            namespace=args.ckpt_namespace,
-            path=args.ckpt,
-        )
+        self.init_ckpt.load_optimizers(optimizers)
         return optimizers
 
     @cached_property
@@ -202,11 +197,7 @@ class Runner:
         args = self.args
         if args.use_fp16:
             scaler = torch.cuda.amp.GradScaler()
-            self.saver.load(
-                scaler=scaler,
-                namespace=args.ckpt_namespace,
-                path=args.ckpt,
-            )
+            self.init_ckpt.load_scaler(scaler)
         else:
             scaler = None
         return scaler
@@ -215,21 +206,9 @@ class Runner:
     # Creators #
     ############
 
-    def create_dataset(self, mode: Mode):
-        raise NotImplementedError
-
-    def create_data_loader(self, mode: Mode):
-        args = self.args
-        dataset = self.create_dataset(mode)
-        data_loader = self.DataLoader(
-            dataset=dataset,
-            batch_size=args.batch_size,
-            num_workers=args.nj,
-            shuffle=mode == self.Mode.TRAIN,
-            drop_last=mode == self.Mode.TRAIN,
-        )
-        print("Dataset size:", len(dataset))
-        return data_loader
+    @abstractmethod
+    def create_dataloader(self, mode: Mode):
+        pass
 
     def create_metrics(self):
         return Metrics()
@@ -269,6 +248,7 @@ class Runner:
     # Steps #
     #########
 
+    @abstractmethod
     def training_step(self, batch, optimizer_idx: int) -> tuple[torch.Tensor, dict]:
         raise NotImplementedError
 
@@ -330,11 +310,12 @@ class Runner:
             stat_dict.update(outputs[1])
         return stat_dict
 
+    @abstractmethod
     def testing_step(self, batch, batch_idx: int) -> dict:
         raise NotImplementedError
 
     def exit(self, reason):
-        self.saver.buffer(self.model, self.optimizers, self.scaler, reason)
+        self.saver.buffer(self.state, self.model, self.optimizers, self.scaler, reason)
         self.saver.dump_all()
         sys.exit(0)
 
@@ -368,10 +349,11 @@ class Runner:
             while self.current_epoch < args.max_epochs:
                 state.epoch += 1
                 desc = f"Train: {self.current_epoch}/{args.max_epochs}"
-                pbar = tqdm.tqdm(self.training_data_loader, desc=desc)
+                pbar = tqdm.tqdm(self.training_dataloader, desc=desc)
 
                 for local_step, batch in enumerate(pbar):
                     prepared_batch = self.prepare_batch(batch, self.Mode.TRAIN)
+
                     try:
                         stat_dict = self.training_step_with_optimization(prepared_batch)
                         if self.global_step % args.log_every == 0:
@@ -414,16 +396,18 @@ class Runner:
                     )
 
                     if is_saving:
-                        self.saver.buffer(model, self.optimizers, self.scaler)
+                        self.saver.buffer(
+                            self.state, model, self.optimizers, self.scaler
+                        )
                         self.saver.dump()
 
-                self.saver.buffer(model, self.optimizers, self.scaler)
+                self.saver.buffer(self.state, model, self.optimizers, self.scaler)
 
         self.exit("finished")
 
-    def val_test_loop(self, desc, data_loader, step_fn, mode):
+    def val_test_loop(self, desc, dataloader, step_fn, mode):
         self.model.eval()
-        pbar = tqdm.tqdm(data_loader, desc=desc)
+        pbar = tqdm.tqdm(dataloader, desc=desc)
         stats_dict = defaultdict(list)
         for index, batch in enumerate(pbar):
             prepared_batch = self.prepare_batch(batch, mode)
@@ -442,16 +426,22 @@ class Runner:
         self,
         weight_decay: float = 0,
         max_epochs: int = 100,
-        save_every_epochs: int = None,
-        save_every_steps: int = None,
-        validate_every_epochs: int = None,
-        validate_every_steps: int = None,
+        validate_every_epochs: Optional[int] = 1,
+        validate_every_steps: Optional[int] = None,
+        save_every_epochs: Optional[int] = 1,
+        save_every_steps: Optional[int] = None,
         update_every_backwards: int = 1,
         grad_clip_thres: float = 1.0,
     ):
         args = self.args
 
         tmpl = "{} not set, are you sure to skip {}? (y/n): "
+
+        if save_every_steps is not None and save_every_epochs is not None:
+            print(
+                "Warning: save_every_steps and save_every_epochs are both set. "
+                "Only save by steps."
+            )
 
         if validate_every_epochs is None and validate_every_steps is None:
             if input(tmpl.format("validate_every_*", "validation")) != "y":
@@ -474,7 +464,7 @@ class Runner:
             f"Validating epoch {self.current_epoch} "
             + ("(sanity checking) " if sanity else "")
             + "...",
-            self.sanity_check_data_loader if sanity else self.validation_data_loader,
+            self.sanity_check_dataloader if sanity else self.validation_dataloader,
             self.validation_step,
             self.Mode.VAL,
         )
@@ -488,7 +478,7 @@ class Runner:
     def test(self):
         stat_dict = self.val_test_loop(
             f"Testing epoch {self.current_epoch} ...",
-            self.testing_data_loader,
+            self.testing_dataloader,
             self.testing_step,
             self.Mode.TEST,
         )
