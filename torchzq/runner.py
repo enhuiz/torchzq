@@ -462,7 +462,7 @@ class Runner(ABC):
         save_every_epochs: Optional[int] = 1,
         save_every_steps: Optional[int] = None,
         update_every_backwards: int = 1,
-        grad_clip_thres: float = 1.0,
+        grad_clip_thres: Optional[float] = 1.0,
     ):
         args = self.args
 
