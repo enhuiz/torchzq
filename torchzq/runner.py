@@ -12,7 +12,6 @@ import torch
 import torch.nn as nn
 import wandb
 from pathlib import Path
-from collections import defaultdict
 from functools import partial, cached_property
 from collections import defaultdict
 from itertools import islice
@@ -24,7 +23,7 @@ from .typing import Optional, Scheduled, _Scheduled
 from .saver import Checkpoint, Saver
 from .scheduler import Scheduler
 from .interrupt import graceful_interrupt_handler
-from .utils import print_directory_tree, default_tuple
+from .utils import print_directory_tree
 from .metric import Metrics
 
 
@@ -227,6 +226,19 @@ class Runner(ABC):
     #########
     # Misc. #
     #########
+    @staticmethod
+    def fill_missing(outputs, default):
+        if outputs is None:
+            outputs = []
+        elif isinstance(outputs, tuple):
+            outputs = list(outputs)
+        else:
+            outputs = [outputs]
+
+        for i in range(len(outputs), len(default)):
+            outputs.append(default[i])
+
+        return tuple(outputs)
 
     @staticmethod
     def set_lr(optimizer, lr):
@@ -283,7 +295,7 @@ class Runner(ABC):
 
         for i, optimizer in enumerate(self.optimizers):
             with self.autocast_if_use_fp16():
-                outputs = default_tuple(self.training_step(batch, i), [None, {}])
+                outputs = self.fill_missing(self.training_step(batch, i), (None, {}))
 
             loss = outputs[0]
             stat_dict.update(outputs[1])
@@ -320,7 +332,7 @@ class Runner(ABC):
     def validation_step(self, batch, batch_idx: int) -> dict:
         stat_dict = {}
         for i in range(len(self.optimizers)):
-            outputs = default_tuple(self.training_step(batch, i), [None, {}])
+            outputs = self.fill_missing(self.training_step(batch, i), (None, {}))
             stat_dict.update(outputs[1])
         return stat_dict
 
@@ -442,7 +454,7 @@ class Runner(ABC):
         stats_dict = defaultdict(list)
         for index, batch in enumerate(pbar):
             prepared_batch = self.prepare_batch(batch, mode)
-            outputs = default_tuple(step_fn(prepared_batch, index), [{}])
+            outputs = self.fill_missing(step_fn(prepared_batch, index), ({},))
             for k, v in outputs[0].items():
                 stats_dict[k].append(v)
         stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
