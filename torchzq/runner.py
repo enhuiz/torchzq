@@ -44,7 +44,8 @@ class Runner(ABC):
         strict_loading: bool = False,
         runs_root: Path = Path("runs"),
         use_fp16: bool = False,
-        ckpt: Path = None,
+        ckpt: Optional[Path] = None,
+        pretrained_ckpt: Optional[Path] = None,
         lr: Scheduled = "1e-3",
         seed: int = 0,
         wandb_project: str = "",
@@ -82,7 +83,7 @@ class Runner(ABC):
 
     @cached_property
     def state(self):
-        return self.init_ckpt.load_state()
+        return self.starting_ckpt.load_state()
 
     @property
     def global_step(self):
@@ -153,11 +154,27 @@ class Runner(ABC):
     @cached_property
     def metrics(self):
         metrics = self.create_metrics()
-        self.init_ckpt.load_metrics(metrics)
+        self.starting_ckpt.load_metrics(metrics)
         return metrics
 
     @cached_property
-    def init_ckpt(self):
+    def pretrained_ckpt(self):
+        """
+        An optional checkpoint loaded before any checkpoint.
+        It can be overwritten by the starting_ckpt.
+        """
+        args = self.args
+        if args.pretrained_ckpt is None:
+            ckpt = Checkpoint()
+        else:
+            ckpt = Checkpoint.from_path(args.pretrained_ckpt)
+        return ckpt
+
+    @cached_property
+    def starting_ckpt(self):
+        """
+        The checkpoint used when resuming training / validate / test.
+        """
         args = self.args
         if args.ckpt is None:
             ckpt = self.saver.get(args.ckpt_namespace, Checkpoint())
@@ -170,8 +187,9 @@ class Runner(ABC):
         args = self.args
         scheduler = self.scheduler
         model = self.create_model()
+        self.pretrained_ckpt.load_model(model, args.strict_loading)
+        self.starting_ckpt.load_model(model, args.strict_loading)
         model.to(args.device)
-        self.init_ckpt.load_model(model, args.strict_loading)
         scheduler.step(
             current_epoch=self.state.epoch,
             global_step=self.state.step,
@@ -189,7 +207,7 @@ class Runner(ABC):
                 for k, v in d.items():
                     if torch.is_tensor(v):
                         d[k] = v.to(args.device)
-        self.init_ckpt.load_optimizers(optimizers)
+        self.starting_ckpt.load_optimizers(optimizers)
         return optimizers
 
     @cached_property
@@ -197,7 +215,7 @@ class Runner(ABC):
         args = self.args
         if args.use_fp16:
             scaler = torch.cuda.amp.GradScaler()
-            self.init_ckpt.load_scaler(scaler)
+            self.starting_ckpt.load_scaler(scaler)
         else:
             scaler = None
         return scaler
