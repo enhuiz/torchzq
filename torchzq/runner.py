@@ -11,6 +11,7 @@ import random
 import torch
 import torch.nn as nn
 import wandb
+from torch.utils.data import DataLoader
 from pathlib import Path
 from functools import partial, cached_property
 from collections import defaultdict
@@ -225,7 +226,7 @@ class Runner(ABC):
     ############
 
     @abstractmethod
-    def create_dataloader(self, mode: Mode):
+    def create_dataloader(self, mode: Mode) -> DataLoader:
         pass
 
     def create_metrics(self):
