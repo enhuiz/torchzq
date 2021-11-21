@@ -357,9 +357,9 @@ class Runner(ABC):
             stat_dict.update(outputs[1])
         return stat_dict
 
-    @abstractmethod
-    def testing_step(self, batch, batch_idx: int) -> dict:
-        raise NotImplementedError
+    @property
+    def testing_step(self):
+        return self.validation_step
 
     def exit(self, reason):
         self.saver.buffer(
