@@ -1,4 +1,3 @@
-import zouqi
 import argparse
 import tqdm
 import time
@@ -18,9 +17,11 @@ from collections import defaultdict
 from itertools import islice
 from enum import Enum
 from abc import ABC, abstractmethod
+from typing import Annotated, Optional
+from argparse_hparams import HParams as HParamsBase
+from dataclasses import dataclass
 
 from .version import __version__
-from .typing import Optional, Scheduled, _Scheduled
 from .saver import Checkpoint, Saver
 from .scheduler import Scheduler
 from .interrupt import graceful_interrupt_handler
@@ -28,43 +29,82 @@ from .utils import print_directory_tree
 from .metric import Metrics
 
 
-class Runner(ABC):
-    args = argparse.Namespace()
+class _Scheduled(str):
+    pass
 
+
+Scheduled = Annotated[str, dict(type=_Scheduled)]
+
+
+def command(func):
+    func.is_command = True
+    return func
+
+
+@dataclass
+class HParams(HParamsBase):
+    command: Annotated[str, dict(positional=True)] = ""
+
+    runner: str = ""
+    version: str = ""
+    name: str = "Unnamed"
+    batch_size: int = 32
+    nj: int = min(os.cpu_count() or 12, 12)
+    device: str = "cuda"
+    strict_loading: bool = False
+    runs_root: Path = Path("runs")
+    use_fp16: bool = False
+    ckpt: Optional[Path] = None
+    pretrained_ckpt: Optional[Path] = None
+    lr: Scheduled = "1e-3"
+    seed: int = 0
+    wandb_project: str = ""
+    ckpt_namespace: str = "default"
+    log_every: int = 10
+
+    # train
+    weight_decay: float = 0
+    max_epochs: int = 100
+    validate_every_epochs: Optional[int] = 1
+    validate_every_steps: Optional[int] = None
+    save_every_epochs: Optional[int] = 1
+    save_every_steps: Optional[int] = None
+    update_every_backwards: int = 1
+    grad_clip_thres: Optional[float] = 1.0
+
+
+class Runner(ABC):
     class Mode(Enum):
         TRAIN = 0
         TEST = 1
         VAL = 2
 
-    def __init__(
-        self,
-        name: str = "Unnamed",
-        batch_size: int = 32,
-        nj: int = min(os.cpu_count(), 12),
-        device: str = "cuda",
-        strict_loading: bool = False,
-        runs_root: Path = Path("runs"),
-        use_fp16: bool = False,
-        ckpt: Optional[Path] = None,
-        pretrained_ckpt: Optional[Path] = None,
-        lr: Scheduled = "1e-3",
-        seed: int = 0,
-        wandb_project: str = "",
-        ckpt_namespace: str = "default",
-        log_every: int = 10,
-    ):
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        self.args.version = self.version
+    def __init__(self):
+        self.hp = self.HParams()
+        self.hp.show()
+        random.seed(self.hp.seed)
+        np.random.seed(self.hp.seed)
+        torch.manual_seed(self.hp.seed)
+        self.hp.version = self.version
+
+    def start(self):
+        command_fn = getattr(self, self.hp.command)
+        if command_fn.is_command:
+            command_fn()
+        else:
+            raise ValueError(f"{self.hp.command} is not a command.")
 
     ##############
     # Read-onlys #
     ##############
 
     @property
+    def HParams(self):
+        return HParams
+
+    @property
     def name(self):
-        return self.args.name
+        return self.hp.name
 
     @property
     def version(self):
@@ -72,7 +112,7 @@ class Runner(ABC):
 
     @property
     def run_dir(self):
-        return self.args.runs_root / self.name
+        return self.hp.runs_root / self.name
 
     @property
     def ckpt_dir(self):
@@ -80,7 +120,7 @@ class Runner(ABC):
 
     @property
     def autocast_if_use_fp16(self):
-        return partial(torch.cuda.amp.autocast, enabled=self.args.use_fp16)
+        return partial(torch.cuda.amp.autocast_mode.autocast, enabled=self.hp.use_fp16)
 
     @cached_property
     def state(self):
@@ -120,8 +160,7 @@ class Runner(ABC):
 
     @cached_property
     def logger(self):
-        args = self.args
-        wandb.init(config=args, project=args.wandb_project, group=self.name)
+        wandb.init(config=self.hp, project=self.hp.wandb_project, group=self.name)
         return wandb
 
     @cached_property
@@ -131,9 +170,9 @@ class Runner(ABC):
     @cached_property
     def scheduler(self):
         scheduler = Scheduler()
-        for k, v in list(vars(self.args).items()):
+        for k, v in list(vars(self.hp).items()):
             if isinstance(v, _Scheduled):
-                setattr(self.args, k, scheduler.schedule(v))
+                setattr(self.hp, k, scheduler.schedule(v))
         return scheduler
 
     @cached_property
@@ -164,11 +203,11 @@ class Runner(ABC):
         An optional checkpoint loaded before any checkpoint.
         It can be overwritten by the starting_ckpt.
         """
-        args = self.args
-        if args.pretrained_ckpt is None:
+        hp = self.hp
+        if hp.pretrained_ckpt is None:
             ckpt = Checkpoint()
         else:
-            ckpt = Checkpoint.from_path(args.pretrained_ckpt)
+            ckpt = Checkpoint.from_path(hp.pretrained_ckpt)
         return ckpt
 
     @cached_property
@@ -176,21 +215,21 @@ class Runner(ABC):
         """
         The checkpoint used when resuming training / validate / test.
         """
-        args = self.args
-        if args.ckpt is None:
-            ckpt = self.saver.get(args.ckpt_namespace, Checkpoint())
+        hp = self.hp
+        if hp.ckpt is None:
+            ckpt = self.saver.get(hp.ckpt_namespace, Checkpoint())
         else:
-            ckpt = Checkpoint.from_path(args.ckpt)
+            ckpt = Checkpoint.from_path(hp.ckpt)
         return ckpt
 
     @cached_property
     def model(self):
-        args = self.args
+        hp = self.hp
         scheduler = self.scheduler
         model = self.create_model()
-        self.pretrained_ckpt.load_model(model, args.strict_loading)
-        self.starting_ckpt.load_model(model, args.strict_loading)
-        model.to(args.device)
+        self.pretrained_ckpt.load_model(model, hp.strict_loading)
+        self.starting_ckpt.load_model(model, hp.strict_loading)
+        model.to(hp.device)
         scheduler.step(
             current_epoch=self.state.epoch,
             global_step=self.state.step,
@@ -199,7 +238,7 @@ class Runner(ABC):
 
     @cached_property
     def optimizers(self):
-        args = self.args
+        hp = self.hp
         optimizers = self.create_optimizers()
         if len(optimizers) == 0:
             raise ValueError("There should be at least 1 optimizer but get 0.")
@@ -207,15 +246,15 @@ class Runner(ABC):
             for d in optimizer.state.values():
                 for k, v in d.items():
                     if torch.is_tensor(v):
-                        d[k] = v.to(args.device)
+                        d[k] = v.to(hp.device)
         self.starting_ckpt.load_optimizers(optimizers)
         return optimizers
 
     @cached_property
     def scaler(self):
-        args = self.args
-        if args.use_fp16:
-            scaler = torch.cuda.amp.GradScaler()
+        hp = self.hp
+        if hp.use_fp16:
+            scaler = torch.cuda.amp.grad_scaler.GradScaler()
             self.starting_ckpt.load_scaler(scaler)
         else:
             scaler = None
@@ -229,17 +268,18 @@ class Runner(ABC):
     def create_dataloader(self, mode: Mode) -> DataLoader:
         pass
 
-    def create_metrics(self):
-        return Metrics()
-
+    @abstractmethod
     def create_model(self):
         raise NotImplementedError
 
+    def create_metrics(self):
+        return Metrics()
+
     def create_optimizers(self):
         self.scheduler
-        args = self.args
+        hp = self.hp
         optimizer = self.Optimizer(params=self.model.parameters(), lr=1)
-        args.lr.add_listener(lambda lr: self.set_lr(optimizer, self.lr_coef * lr))
+        hp.lr.add_listener(lambda lr: self.set_lr(optimizer, self.lr_coef * lr))
         return [optimizer]
 
     #########
@@ -265,28 +305,28 @@ class Runner(ABC):
             g["lr"] = lr
 
     def prepare_batch(self, batch, mode):
-        args = self.args
+        hp = self.hp
 
         if isinstance(batch, dict):
             for k in batch:
                 if isinstance(batch[k], torch.Tensor):
-                    batch[k] = batch[k].to(args.device)
+                    batch[k] = batch[k].to(hp.device)
 
         if isinstance(batch, (tuple, list)):
             batch = list(batch)
             for i in range(len(batch)):
                 if isinstance(batch[i], torch.Tensor):
-                    batch[i] = batch[i].to(args.device)
+                    batch[i] = batch[i].to(hp.device)
 
         return batch
 
     def clip_grad_norm(self, optimizer_idx):
-        args = self.args
+        hp = self.hp
         msg = "If you have more than one optimizers, please override clip_grad_norm()."
         assert optimizer_idx < 1, msg
         return nn.utils.clip_grad_norm_(
             self.model.parameters(),
-            args.grad_clip_thres or 1e9,
+            hp.grad_clip_thres or 1e9,
         )
 
     #########
@@ -298,14 +338,14 @@ class Runner(ABC):
         raise NotImplementedError
 
     def training_step_with_optimization(self, batch) -> dict:
-        args = self.args
+        hp = self.hp
         state = self.state
 
         stat_dict = {}
         start_time = time.time()
 
         self.backward_counter += 1
-        state.step += self.backward_counter % args.update_every_backwards == 0
+        state.step += self.backward_counter % hp.update_every_backwards == 0
 
         self.scheduler.step(
             current_epoch=self.current_epoch,
@@ -320,20 +360,20 @@ class Runner(ABC):
             stat_dict.update(outputs[1])
 
             if loss is not None:
-                if args.use_fp16:
-                    self.scaler.scale(loss / args.update_every_backwards).backward()
+                if hp.use_fp16:
+                    self.scaler.scale(loss / hp.update_every_backwards).backward()
                 else:
-                    (loss / args.update_every_backwards).backward()
+                    (loss / hp.update_every_backwards).backward()
 
-            if self.backward_counter % args.update_every_backwards == 0:
-                if args.use_fp16:
+            if self.backward_counter % hp.update_every_backwards == 0:
+                if hp.use_fp16:
                     self.scaler.unscale_(optimizer)
 
                 grad_norm = self.clip_grad_norm(i)
 
                 stat_dict[f"grad_norm_{i}"] = grad_norm.item()
 
-                if args.use_fp16:
+                if hp.use_fp16:
                     # scaler.step will automatically skip optimizer.step
                     # if grad_norm is not finite
                     self.scaler.step(optimizer)
@@ -378,7 +418,7 @@ class Runner(ABC):
     #########
 
     def training_loop(self):
-        args = self.args
+        hp = self.hp
 
         logger = self.logger
 
@@ -400,9 +440,9 @@ class Runner(ABC):
             self.exit("interrupt")
 
         with graceful_interrupt_handler(callback=interrupt_callback):
-            while self.current_epoch < args.max_epochs:
+            while self.current_epoch < hp.max_epochs:
                 state.epoch += 1
-                desc = f"Train: {self.current_epoch}/{args.max_epochs}"
+                desc = f"Train: {self.current_epoch}/{hp.max_epochs}"
                 pbar = tqdm.tqdm(self.training_dataloader, desc=desc)
 
                 for local_step, batch in enumerate(pbar):
@@ -410,7 +450,7 @@ class Runner(ABC):
 
                     try:
                         stat_dict = self.training_step_with_optimization(prepared_batch)
-                        if self.global_step % args.log_every == 0:
+                        if self.global_step % hp.log_every == 0:
                             stat_dict = {f"train/{k}": v for k, v in stat_dict.items()}
                             logger.log(stat_dict, self.global_step)
                     except RuntimeError as e:
@@ -425,12 +465,12 @@ class Runner(ABC):
                             raise e
 
                     is_validating = (
-                        args.validate_every_steps is not None
-                        and self.global_step % args.validate_every_steps == 0
+                        hp.validate_every_steps is not None
+                        and self.global_step % hp.validate_every_steps == 0
                     ) or (
-                        args.validate_every_epochs is not None
+                        hp.validate_every_epochs is not None
                         and local_step == pbar.total - 1
-                        and self.current_epoch % args.validate_every_epochs == 0
+                        and self.current_epoch % hp.validate_every_epochs == 0
                     )
 
                     if is_validating:
@@ -441,12 +481,12 @@ class Runner(ABC):
                         model.train()
 
                     is_saving = (
-                        args.save_every_steps is not None
-                        and self.global_step % args.save_every_steps == 0
+                        hp.save_every_steps is not None
+                        and self.global_step % hp.save_every_steps == 0
                     ) or (
-                        args.save_every_epochs is not None
+                        hp.save_every_epochs is not None
                         and local_step == pbar.total - 1
-                        and self.current_epoch % args.save_every_epochs == 0
+                        and self.current_epoch % hp.save_every_epochs == 0
                     )
 
                     if is_saving:
@@ -485,44 +525,36 @@ class Runner(ABC):
     # Commands #
     ############
 
-    @zouqi.command
+    @command
     def train(
         self,
-        weight_decay: float = 0,
-        max_epochs: int = 100,
-        validate_every_epochs: Optional[int] = 1,
-        validate_every_steps: Optional[int] = None,
-        save_every_epochs: Optional[int] = 1,
-        save_every_steps: Optional[int] = None,
-        update_every_backwards: int = 1,
-        grad_clip_thres: Optional[float] = 1.0,
     ):
-        args = self.args
+        hp = self.hp
 
         tmpl = "{} not set, are you sure to skip {}? (y/n): "
 
-        if save_every_steps is not None and save_every_epochs is not None:
+        if hp.save_every_steps is not None and hp.save_every_epochs is not None:
             print(
                 "Warning: save_every_steps and save_every_epochs are both set. "
                 "Only save by steps."
             )
 
-        if validate_every_epochs is None and validate_every_steps is None:
+        if hp.validate_every_epochs is None and hp.validate_every_steps is None:
             if input(tmpl.format("validate_every_*", "validation")) != "y":
                 exit()
 
-        if save_every_epochs is None and save_every_steps is None:
+        if hp.save_every_epochs is None and hp.save_every_steps is None:
             if input(tmpl.format("save_every_*", "saving")) != "y":
                 exit()
 
         self.run_dir.mkdir(parents=True, exist_ok=True)
         time_str = time.strftime("%Y%m%dT%H%M%S")
         with open(self.run_dir / f"config-{time_str}.yml", "w") as f:
-            yaml.dump(vars(args), f)
+            yaml.dump(vars(self.hp), f)
 
         return self.training_loop()
 
-    @zouqi.command
+    @command
     def validate(self, sanity: bool = False):
         stat_dict = self.val_test_loop(
             f"Validating epoch {self.current_epoch} "
@@ -538,7 +570,7 @@ class Runner(ABC):
             self.logger.log(stat_dict, self.global_step)
         return stat_dict
 
-    @zouqi.command
+    @command
     def test(self):
         stat_dict = self.val_test_loop(
             f"Testing epoch {self.current_epoch} ...",
@@ -558,19 +590,19 @@ class Runner(ABC):
             shutil.rmtree(path)
             print(str(path), "removed.")
 
-    @zouqi.command
+    @command
     def clear(self):
-        args = self.args
+        hp = self.hp
         self.ls()
-        if (args.runs_root / self.name).exists():
+        if (hp.runs_root / self.name).exists():
             if input("Are you sure to clear? (y)\n").lower() == "y":
-                self.try_rmtree(args.runs_root / self.name)
+                self.try_rmtree(hp.runs_root / self.name)
             else:
                 print(f"Not cleared.")
         else:
             print("Nothing to clear.")
 
-    @zouqi.command
+    @command
     def ls(self):
-        args = self.args
-        print_directory_tree(args.runs_root / self.name)
+        hp = self.hp
+        print_directory_tree(hp.runs_root / self.name)

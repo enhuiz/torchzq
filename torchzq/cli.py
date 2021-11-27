@@ -1,7 +1,7 @@
 import os
 import argparse
 from pathlib import Path
-from zouqi.utils import load_yaml
+from argparse_hparams.utils import load_yaml
 
 
 def main():
@@ -10,7 +10,7 @@ def main():
     parser.add_argument("command", type=str)
     args, manual_argv = parser.parse_known_args()
 
-    data = load_yaml(args.yaml, args.command)
+    data = load_yaml(args.yaml)
 
     if "runner" not in data:
         raise ValueError("Please specify a runner in your config file.")
@@ -31,7 +31,7 @@ def main():
         if not manual_argv[i].startswith("--"):
             manual_argv[i] = f"'{manual_argv[i]}'"
 
-    cmd = f"{runner} {args.command} --config {args.yaml} {' '.join(manual_argv)} --config-ignored runner"
+    cmd = f"{runner} {args.command} --default {args.yaml} {' '.join(manual_argv)}"
     os.system(cmd)
 
 

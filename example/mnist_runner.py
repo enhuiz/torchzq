@@ -45,8 +45,8 @@ class Runner(torchzq.Runner):
     def create_model(self):
         return Net()
 
-    def create_dataloader(self, mode: torchzq.Runner.Mode):
-        args = self.args
+    def create_dataloader(self, mode):
+        hp = self.hp
         dataset = datasets.MNIST(
             "../data",
             train=mode == "training",
@@ -60,8 +60,8 @@ class Runner(torchzq.Runner):
         )
         return DataLoader(
             dataset,
-            batch_size=args.batch_size,
-            num_workers=args.nj,
+            batch_size=hp.batch_size,
+            num_workers=hp.nj,
             shuffle=mode == mode.TRAIN,
             drop_last=mode == mode.TRAIN,
         )
@@ -72,15 +72,15 @@ class Runner(torchzq.Runner):
         def early_stop(count):
             if count >= 2:
                 # the metric does not go down for the latest two validations
-                self.args.max_epochs = -1  # this terminates the training
+                self.hp.max_epochs = -1  # this terminates the training
 
         metrics.add_metric("val/nll_loss", [early_stop])
         return metrics
 
     def prepare_batch(self, batch, _):
         x, y = batch
-        x = x.to(self.args.device)
-        y = y.to(self.args.device)
+        x = x.to(self.hp.device)
+        y = y.to(self.hp.device)
         return x, y
 
     def training_step(self, batch, optimizer_index):
@@ -96,4 +96,4 @@ class Runner(torchzq.Runner):
 
 
 if __name__ == "__main__":
-    torchzq.start(Runner)
+    Runner().start()

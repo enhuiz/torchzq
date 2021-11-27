@@ -43,13 +43,12 @@ setup(
     install_requires=[
         "torch>=1.8.0",
         "torchvision>=0.9.0",
-        "zouqi>=1.0.10.dev20210906190247",
         "pyyaml",
         "natsort",
         "tqdm",
         "pandas",
-        "deprecated",
         "wandb",
+        "argparse-hparams",
     ],
     url="https://github.com/enhuiz/torchzq",
     entry_points={
