@@ -1,4 +1,3 @@
-import argparse
 import tqdm
 import time
 import yaml
@@ -41,43 +40,42 @@ def command(func):
     return func
 
 
-@dataclass
-class HParams(HParamsBase):
-    command: Annotated[str, dict(positional=True)] = ""
-
-    runner: str = ""
-    version: str = ""
-    name: str = "Unnamed"
-    batch_size: int = 32
-    nj: int = min(os.cpu_count() or 12, 12)
-    device: str = "cuda"
-    strict_loading: bool = False
-    runs_root: Path = Path("runs")
-    use_fp16: bool = False
-    ckpt: Optional[Path] = None
-    pretrained_ckpt: Optional[Path] = None
-    lr: Scheduled = "1e-3"
-    seed: int = 0
-    wandb_project: str = ""
-    ckpt_namespace: str = "default"
-    log_every: int = 10
-
-    # train
-    weight_decay: float = 0
-    max_epochs: int = 100
-    validate_every_epochs: Optional[int] = 1
-    validate_every_steps: Optional[int] = None
-    save_every_epochs: Optional[int] = 1
-    save_every_steps: Optional[int] = None
-    update_every_backwards: int = 1
-    grad_clip_thres: Optional[float] = 1.0
-
-
 class Runner(ABC):
     class Mode(Enum):
         TRAIN = 0
         TEST = 1
         VAL = 2
+
+    @dataclass
+    class HParams(HParamsBase):
+        command: Annotated[str, dict(positional=True)] = ""
+
+        runner: str = ""
+        version: str = ""
+        name: str = "Unnamed"
+        nj: int = min(os.cpu_count() or 12, 12)
+        device: str = "cuda"
+        strict_loading: bool = False
+        runs_root: Path = Path("runs")
+        use_fp16: bool = False
+        ckpt: Optional[Path] = None
+        pretrained_ckpt: Optional[Path] = None
+        lr: Scheduled = "1e-3"
+        seed: int = 0
+        wandb_project: str = ""
+        ckpt_namespace: str = "default"
+        log_every: int = 10
+
+        # train
+        batch_size: int = 32
+        weight_decay: float = 0
+        max_epochs: int = 100
+        validate_every_epochs: Optional[int] = 1
+        validate_every_steps: Optional[int] = None
+        save_every_epochs: Optional[int] = 1
+        save_every_steps: Optional[int] = None
+        update_every_backwards: int = 1
+        grad_clip_thres: Optional[float] = 1.0
 
     def __init__(self):
         self.hp = self.HParams()
@@ -97,10 +95,6 @@ class Runner(ABC):
     ##############
     # Read-onlys #
     ##############
-
-    @property
-    def HParams(self):
-        return HParams
 
     @property
     def name(self):
@@ -361,12 +355,14 @@ class Runner(ABC):
 
             if loss is not None:
                 if hp.use_fp16:
+                    assert self.scaler is not None
                     self.scaler.scale(loss / hp.update_every_backwards).backward()
                 else:
                     (loss / hp.update_every_backwards).backward()
 
             if self.backward_counter % hp.update_every_backwards == 0:
                 if hp.use_fp16:
+                    assert self.scaler is not None
                     self.scaler.unscale_(optimizer)
 
                 grad_norm = self.clip_grad_norm(i)
@@ -376,6 +372,7 @@ class Runner(ABC):
                 if hp.use_fp16:
                     # scaler.step will automatically skip optimizer.step
                     # if grad_norm is not finite
+                    assert self.scaler is not None
                     self.scaler.step(optimizer)
                     self.scaler.update()
                 elif grad_norm.isfinite():
