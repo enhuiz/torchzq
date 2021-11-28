@@ -76,7 +76,10 @@ class Runner:
         update_every_backwards: int = 1
         grad_clip_thres: Optional[float] = 1.0
 
+    hp: HParams
+
     def __init__(self):
+        self.hp = self.HParams()
         random.seed(self.hp.seed)
         np.random.seed(self.hp.seed)
         torch.manual_seed(self.hp.seed)
@@ -149,12 +152,6 @@ class Runner:
     ########
     # Lazy #
     ########
-
-    @cached_property
-    def hp(self):
-        # due to https://github.com/microsoft/pyright/issues/2627
-        # use this for a temporary workaround
-        return self.HParams()
 
     @cached_property
     def logger(self):
