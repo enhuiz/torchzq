@@ -36,7 +36,7 @@ Scheduled = Annotated[str, dict(type=_Scheduled)]
 
 
 def command(func):
-    func.is_command = True
+    func._is_command = True
     return func
 
 
@@ -77,17 +77,16 @@ class Runner(ABC):
         update_every_backwards: int = 1
         grad_clip_thres: Optional[float] = 1.0
 
-    def __init__(self):
+    def start(self):
         self.hp = self.HParams()
-        self.hp.show()
         random.seed(self.hp.seed)
         np.random.seed(self.hp.seed)
         torch.manual_seed(self.hp.seed)
         self.hp.version = self.version
+        self.hp.show()
 
-    def start(self):
         command_fn = getattr(self, self.hp.command)
-        if command_fn.is_command:
+        if command_fn._is_command:
             command_fn()
         else:
             raise ValueError(f"{self.hp.command} is not a command.")
@@ -601,5 +600,4 @@ class Runner(ABC):
 
     @command
     def ls(self):
-        hp = self.hp
-        print_directory_tree(hp.runs_root / self.name)
+        print_directory_tree(self.hp.runs_root / self.name)
