@@ -83,7 +83,7 @@ class Runner:
         self.hp.version = self.version
 
     def start(self):
-        self.hp.show()
+        self.hp.show(sort=True)
         command_fn = getattr(self, self.hp.command)
         if command_fn._is_command:
             command_fn()
