@@ -77,14 +77,15 @@ class Runner(ABC):
         update_every_backwards: int = 1
         grad_clip_thres: Optional[float] = 1.0
 
-    def start(self):
+    def __init__(self):
         self.hp = self.HParams()
         random.seed(self.hp.seed)
         np.random.seed(self.hp.seed)
         torch.manual_seed(self.hp.seed)
         self.hp.version = self.version
-        self.hp.show()
 
+    def start(self):
+        self.hp.show()
         command_fn = getattr(self, self.hp.command)
         if command_fn._is_command:
             command_fn()
