@@ -15,7 +15,6 @@ from functools import partial, cached_property
 from collections import defaultdict
 from itertools import islice
 from enum import Enum
-from abc import ABC, abstractmethod
 from typing import Annotated, Optional
 from argparse_hparams import HParams as HParamsBase
 from dataclasses import dataclass
@@ -40,7 +39,7 @@ def command(func):
     return func
 
 
-class Runner(ABC):
+class Runner:
     class Mode(Enum):
         TRAIN = 0
         TEST = 1
@@ -78,7 +77,6 @@ class Runner(ABC):
         grad_clip_thres: Optional[float] = 1.0
 
     def __init__(self):
-        self.hp = self.HParams()
         random.seed(self.hp.seed)
         np.random.seed(self.hp.seed)
         torch.manual_seed(self.hp.seed)
@@ -151,6 +149,12 @@ class Runner(ABC):
     ########
     # Lazy #
     ########
+
+    @cached_property
+    def hp(self):
+        # due to https://github.com/microsoft/pyright/issues/2627
+        # use this for a temporary workaround
+        return self.HParams()
 
     @cached_property
     def logger(self):
@@ -258,11 +262,9 @@ class Runner(ABC):
     # Creators #
     ############
 
-    @abstractmethod
     def create_dataloader(self, mode: Mode) -> DataLoader:
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def create_model(self):
         raise NotImplementedError
 
@@ -327,7 +329,6 @@ class Runner(ABC):
     # Steps #
     #########
 
-    @abstractmethod
     def training_step(self, batch, optimizer_idx: int) -> tuple[torch.Tensor, dict]:
         raise NotImplementedError
 
