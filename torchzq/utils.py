@@ -1,3 +1,4 @@
+import pandas as pd
 import torch
 from pathlib import Path
 from natsort import natsorted
@@ -27,3 +28,18 @@ def print_directory_tree(root: Path, prefix: str = ""):
                 print_directory_tree(path, base + "├── ")
             else:
                 print_directory_tree(paths[-1], base + "└── ")
+
+
+def make_grad_dataframe(module):
+    rows = []
+    for name, p in module.named_parameters():
+        if p.grad is not None:
+            row = dict(
+                name=name,
+                min=p.grad.min().item(),
+                max=p.grad.max().item(),
+                mean=p.grad.mean().item(),
+            )
+            rows.append(row)
+    df = pd.DataFrame(rows)
+    return df

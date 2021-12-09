@@ -23,7 +23,7 @@ from .version import __version__
 from .saver import Checkpoint, Saver
 from .scheduler import Scheduler
 from .interrupt import graceful_interrupt_handler
-from .utils import print_directory_tree
+from .utils import make_grad_dataframe, print_directory_tree
 from .metric import Metrics
 
 
@@ -75,6 +75,7 @@ class Runner:
         save_every_steps: Optional[int] = None
         update_every_backwards: int = 1
         grad_clip_thres: Optional[float] = 1.0
+        grad_log_every: Optional[int] = 100
 
     hp: HParams
 
@@ -362,6 +363,12 @@ class Runner:
                 if hp.use_fp16:
                     assert self.scaler is not None
                     self.scaler.unscale_(optimizer)
+
+                if hp.grad_log_every and self.global_step % hp.grad_log_every == 0:
+                    path = self.run_dir / "grad" / f"{self.global_step}.csv"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    make_grad_dataframe(self.model).to_csv(path, index=False)
+                    del path
 
                 grad_norm = self.clip_grad_norm(optimizer_idx=i)
 
