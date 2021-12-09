@@ -315,7 +315,7 @@ class Runner:
 
     def clip_grad_norm(self, optimizer_idx):
         hp = self.hp
-        msg = "If you have more than one optimizers, please override clip_grad_norm()."
+        msg = "Multiple optimizers detected, please override clip_grad_norm()."
         assert optimizer_idx < 1, msg
         return nn.utils.clip_grad_norm_(
             self.model.parameters(),
@@ -363,7 +363,7 @@ class Runner:
                     assert self.scaler is not None
                     self.scaler.unscale_(optimizer)
 
-                grad_norm = self.clip_grad_norm(i)
+                grad_norm = self.clip_grad_norm(optimizer_idx=i)
 
                 stat_dict[f"grad_norm_{i}"] = grad_norm.item()
 
@@ -414,7 +414,6 @@ class Runner:
 
     def training_loop(self):
         hp = self.hp
-
         logger = self.logger
 
         # run sanity check before every training loop
@@ -521,9 +520,7 @@ class Runner:
     ############
 
     @command
-    def train(
-        self,
-    ):
+    def train(self):
         hp = self.hp
 
         tmpl = "{} not set, are you sure to skip {}? (y/n): "
