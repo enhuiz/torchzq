@@ -3,6 +3,7 @@ import time
 import yaml
 import sys
 import os
+import gc
 import shutil
 import numpy as np
 import random
@@ -449,21 +450,24 @@ class Runner:
                 for local_step, batch in enumerate(pbar):
                     prepared_batch = self.prepare_batch(batch, self.Mode.TRAIN)
 
+                    oom = False
                     try:
                         stat_dict = self.training_step_with_optimization(prepared_batch)
                         if self.global_step % hp.log_every == 0:
                             stat_dict = {f"train/{k}": v for k, v in stat_dict.items()}
                             logger.log(stat_dict, self.global_step)
                     except RuntimeError as e:
-                        if "out of memory" in str(e):
+                        oom = "out of memory" in str(e)
+                        if not oom:
+                            raise e
+                    finally:
+                        if oom:
                             pbar.set_description("OOM! Skip batch.")
                             for p in model.parameters():
                                 if p.grad is not None:
-                                    del p.grad  # free some memory
+                                    del p.grad
+                            gc.collect()
                             torch.cuda.empty_cache()
-                            continue
-                        else:
-                            raise e
 
                     is_validating = (
                         hp.validate_every_steps is not None
