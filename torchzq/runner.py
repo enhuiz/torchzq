@@ -462,7 +462,7 @@ class Runner:
                             raise e
                     finally:
                         if oom:
-                            pbar.set_description("OOM! Skip batch.")
+                            print("OOM! Skip batch.")
                             for p in model.parameters():
                                 if p.grad is not None:
                                     del p.grad
