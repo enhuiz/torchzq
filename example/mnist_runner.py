@@ -39,8 +39,10 @@ class Net(nn.Module):
 
 
 class Runner(torchzq.Runner):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    class HParams(torchzq.Runner.HParams):
+        lr: float = 1e-3
+
+    hp: HParams
 
     def create_model(self):
         return Net()

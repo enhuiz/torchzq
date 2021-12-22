@@ -1,4 +1,4 @@
-# TorchZQ: A PyTorch experiment runner built with [zouqi](https://github.com/enhuiz/zouqi)
+# torchzq: a PyTorch experiment runner
 
 ## Installation
 
@@ -14,14 +14,13 @@ Install the latest version:
 pip install git+https://github.com/enhuiz/torchzq@main
 ```
 
-## An Example for MNIST Classification
+## A customized runner for MNIST classification
 
 ```python
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import datasets, transforms
-
 import torchzq
 
 class Net(nn.Module):
@@ -51,9 +50,6 @@ class Net(nn.Module):
 
 
 class Runner(torchzq.Runner):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     def create_model(self):
         return Net()
 
@@ -92,7 +88,7 @@ if __name__ == "__main__":
     torchzq.start(Runner)
 ```
 
-## Run an Example
+## Execute the runner
 
 **Training**
 
@@ -115,7 +111,7 @@ pip install wandb # install weight & bias client
 wandb login       # login
 ```
 
-## Supported Features
+## Supported features
 
 - [x] Model checkpoints
 - [x] Logging (Weights & Biases)

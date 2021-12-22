@@ -33,7 +33,7 @@ with open("README.md", "r") as f:
 setup(
     name="torchzq",
     python_requires=">=3.9.0",
-    version=write_version("1.0.11", True),
+    version=write_version("1.1.0"),
     description="TorchZQ: A PyTorch experiment runner.",
     author="enhuiz",
     author_email="niuzhe.nz@outlook.com",
