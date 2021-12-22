@@ -24,7 +24,7 @@ from .version import __version__
 from .saver import Checkpoint, Saver
 from .scheduler import Scheduler
 from .interrupt import graceful_interrupt_handler
-from .utils import make_grad_dataframe, print_directory_tree
+from .utils import make_grad_dataframe, print_directory_tree, flatten_dict
 from .metric import Metrics
 
 
@@ -335,7 +335,7 @@ class Runner:
         hp = self.hp
         state = self.state
 
-        stat_dict = {}
+        scalar_dict = {}
         start_time = time.time()
 
         self.backward_counter += 1
@@ -351,7 +351,7 @@ class Runner:
                 outputs = self.fill_missing(self.training_step(batch, i), (None, {}))
 
             loss = outputs[0]
-            stat_dict.update(outputs[1])
+            scalar_dict.update(outputs[1])
 
             if loss is not None:
                 if hp.use_fp16:
@@ -373,7 +373,7 @@ class Runner:
 
                 grad_norm = self.clip_grad_norm(optimizer_idx=i)
 
-                stat_dict[f"grad_norm_{i}"] = grad_norm.item()
+                scalar_dict[f"grad_norm_{i}"] = grad_norm.item()
 
                 if hp.use_fp16:
                     # scaler.step will automatically skip optimizer.step
@@ -389,16 +389,16 @@ class Runner:
 
                 optimizer.zero_grad()
 
-        stat_dict["elapsed_time"] = time.time() - start_time
+        scalar_dict["elapsed_time"] = time.time() - start_time
 
-        return stat_dict
+        return scalar_dict
 
     def validation_step(self, batch, batch_idx: int) -> dict:
-        stat_dict = {}
+        scalar_dict = {}
         for i in range(len(self.optimizers)):
             outputs = self.fill_missing(self.training_step(batch, i), (None, {}))
-            stat_dict.update(outputs[1])
-        return stat_dict
+            scalar_dict.update(outputs[1])
+        return scalar_dict
 
     @property
     def testing_step(self):
@@ -420,6 +420,27 @@ class Runner:
     # Loops #
     #########
 
+    @staticmethod
+    def build_checker(every_step, every_epoch):
+        # divisible (and exists)
+        d = lambda a, b: b is not None and a % b == 0
+        # divisible by step
+        ds = lambda a: d(a, every_step)
+        # divisible by epoch
+        de = lambda a: d(a, every_epoch)
+        # checker
+        return lambda step, epoch, last: ds(step) or (de(epoch) and last)
+
+    @cached_property
+    def is_saving(self):
+        hp = self.hp
+        return self.build_checker(hp.save_every_steps, hp.save_every_epochs)
+
+    @cached_property
+    def is_validating(self):
+        hp = self.hp
+        return self.build_checker(hp.validate_every_steps, hp.validate_every_epochs)
+
     def training_loop(self):
         hp = self.hp
         logger = self.logger
@@ -437,7 +458,7 @@ class Runner:
         model = self.model.train()
         state = self.state
 
-        def interrupt_callback(signum):
+        def interrupt_callback(_):
             print("Trying to gracefully shutdown ...")
             self.exit("interrupt")
 
@@ -446,16 +467,18 @@ class Runner:
                 state.epoch += 1
                 desc = f"Train: {self.current_epoch}/{hp.max_epochs}"
                 pbar = tqdm.tqdm(self.training_dataloader, desc=desc)
+                total = len(self.training_dataloader)
 
                 for local_step, batch in enumerate(pbar):
-                    prepared_batch = self.prepare_batch(batch, self.Mode.TRAIN)
+                    batch = self.prepare_batch(batch, self.Mode.TRAIN)
 
                     oom = False
                     try:
-                        stat_dict = self.training_step_with_optimization(prepared_batch)
+                        scalar_dict = self.training_step_with_optimization(batch)
                         if self.global_step % hp.log_every == 0:
-                            stat_dict = {f"train/{k}": v for k, v in stat_dict.items()}
-                            logger.log(stat_dict, self.global_step)
+                            scalar_dict = flatten_dict(dict(train=scalar_dict))
+                            logger.log(scalar_dict, self.global_step)
+                        del scalar_dict
                     except RuntimeError as e:
                         oom = "out of memory" in str(e)
                         if not oom:
@@ -463,41 +486,29 @@ class Runner:
                     finally:
                         if oom:
                             print("OOM! Skip batch.")
+                            del batch
                             for p in model.parameters():
                                 if p.grad is not None:
                                     del p.grad
                             gc.collect()
-                            torch.cuda.empty_cache()
 
-                    is_validating = (
-                        hp.validate_every_steps is not None
-                        and self.global_step % hp.validate_every_steps == 0
-                    ) or (
-                        hp.validate_every_epochs is not None
-                        and local_step == pbar.total - 1
-                        and self.current_epoch % hp.validate_every_epochs == 0
+                    check = lambda checker: checker(
+                        step=self.global_step,
+                        epoch=self.current_epoch,
+                        last=local_step == total - 1,
                     )
 
-                    if is_validating:
+                    if check(self.is_validating):
                         self.metrics(self.validate())
                         log_dict = self.metrics.to_dict()
                         log_dict["epoch"] = self.current_epoch
                         logger.log(log_dict, self.global_step)
                         model.train()
 
-                    is_saving = (
-                        hp.save_every_steps is not None
-                        and self.global_step % hp.save_every_steps == 0
-                    ) or (
-                        hp.save_every_epochs is not None
-                        and local_step == pbar.total - 1
-                        and self.current_epoch % hp.save_every_epochs == 0
-                    )
-
-                    if is_saving:
+                    if check(self.is_saving):
                         self.saver.buffer(
                             self.state,
-                            model,
+                            self.model,
                             self.optimizers,
                             self.scaler,
                             self.metrics,
@@ -519,12 +530,12 @@ class Runner:
         pbar = tqdm.tqdm(dataloader, desc=desc)
         stats_dict = defaultdict(list)
         for index, batch in enumerate(pbar):
-            prepared_batch = self.prepare_batch(batch, mode)
-            outputs = self.fill_missing(step_fn(prepared_batch, index), ({},))
+            batch = self.prepare_batch(batch, mode)
+            outputs = self.fill_missing(step_fn(batch, index), ({},))
             for k, v in outputs[0].items():
                 stats_dict[k].append(v)
-        stat_dict = {k: np.mean(v) for k, v in stats_dict.items()}
-        return stat_dict
+        scalar_dict = {k: np.mean(v) for k, v in stats_dict.items()}
+        return scalar_dict
 
     ############
     # Commands #
@@ -559,7 +570,7 @@ class Runner:
 
     @command
     def validate(self, sanity: bool = False):
-        stat_dict = self.val_test_loop(
+        scalar_dict = self.val_test_loop(
             f"Validating epoch {self.current_epoch} "
             + ("(sanity checking) " if sanity else "")
             + "...",
@@ -567,25 +578,25 @@ class Runner:
             self.validation_step,
             self.Mode.VAL,
         )
-        stat_dict = {f"val/{k}": v for k, v in stat_dict.items()}
-        if stat_dict:
-            stat_dict["epoch"] = self.current_epoch
-            self.logger.log(stat_dict, self.global_step)
-        return stat_dict
+        scalar_dict = flatten_dict(dict(val=scalar_dict))
+        if scalar_dict and not sanity:
+            scalar_dict["epoch"] = self.current_epoch
+            self.logger.log(scalar_dict, self.global_step)
+        return scalar_dict
 
     @command
     def test(self):
-        stat_dict = self.val_test_loop(
+        scalar_dict = self.val_test_loop(
             f"Testing epoch {self.current_epoch} ...",
             self.testing_dataloader,
             self.testing_step,
             self.Mode.TEST,
         )
-        stat_dict = {f"test/{k}": v for k, v in stat_dict.items()}
-        if stat_dict:
-            stat_dict["epoch"] = self.current_epoch
-            self.logger.log(stat_dict, self.global_step)
-        return stat_dict
+        scalar_dict = flatten_dict(dict(test=scalar_dict))
+        if scalar_dict:
+            scalar_dict["epoch"] = self.current_epoch
+            self.logger.log(scalar_dict, self.global_step)
+        return scalar_dict
 
     @staticmethod
     def try_rmtree(path):
