@@ -1,17 +1,11 @@
-# torchzq: a PyTorch experiment runner
+# TorchZQ: a PyTorch experiment runner
 
 ## Installation
 
-Install from PyPI:
+Install from PyPI (latest):
 
 ```
-pip install torchzq
-```
-
-Install the latest version:
-
-```
-pip install git+https://github.com/enhuiz/torchzq@main
+pip install torchzq --pre --upgrade
 ```
 
 ## A customized runner for MNIST classification
@@ -20,8 +14,11 @@ pip install git+https://github.com/enhuiz/torchzq@main
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
+
 import torchzq
+
 
 class Net(nn.Module):
     def __init__(self):
@@ -50,13 +47,19 @@ class Net(nn.Module):
 
 
 class Runner(torchzq.Runner):
+    class HParams(torchzq.Runner.HParams):
+        lr: float = 1e-3
+
+    hp: HParams
+
     def create_model(self):
         return Net()
 
-    def create_dataset(self):
-        return datasets.MNIST(
+    def create_dataloader(self, mode):
+        hp = self.hp
+        dataset = datasets.MNIST(
             "../data",
-            train=self.training,
+            train=mode == "training",
             download=True,
             transform=transforms.Compose(
                 [
@@ -65,27 +68,45 @@ class Runner(torchzq.Runner):
                 ]
             ),
         )
+        return DataLoader(
+            dataset,
+            batch_size=hp.batch_size,
+            num_workers=hp.nj,
+            shuffle=mode == mode.TRAIN,
+            drop_last=mode == mode.TRAIN,
+        )
 
-    def prepare_batch(self, batch):
+    def create_metrics(self):
+        metrics = super().create_metrics()
+
+        def early_stop(count):
+            if count >= 2:
+                # the metric does not go down for the latest two validations
+                self.hp.max_epochs = -1  # this terminates the training
+
+        metrics.add_metric("val/nll_loss", [early_stop])
+        return metrics
+
+    def prepare_batch(self, batch, _):
         x, y = batch
-        x = x.to(self.args.device)
-        y = y.to(self.args.device)
+        x = x.to(self.hp.device)
+        y = y.to(self.hp.device)
         return x, y
 
     def training_step(self, batch, optimizer_index):
-        x, y = self.prepare_batch(batch)
+        x, y = batch
         loss = F.nll_loss(self.model(x), y)
         return loss, {"nll_loss": loss.item()}
 
     @torch.no_grad()
     def testing_step(self, batch, batch_index):
-        x, y = self.prepare_batch(batch)
+        x, y = batch
         y_ = self.model(x).argmax(dim=-1)
         return {"accuracy": (y_ == y).float().mean().item()}
 
 
 if __name__ == "__main__":
-    torchzq.start(Runner)
+    Runner().start()
 ```
 
 ## Execute the runner
