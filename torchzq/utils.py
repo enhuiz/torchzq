@@ -34,7 +34,7 @@ def print_directory_tree(root: Path, prefix: str = ""):
 def make_grad_dataframe(module):
     rows = []
     for name, p in module.named_parameters():
-        if p.grad is not None:
+        if p.grad is not None and p.grad.numel() > 0:
             row = dict(
                 name=name,
                 min=p.grad.min().item(),
