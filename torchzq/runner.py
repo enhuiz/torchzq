@@ -273,7 +273,8 @@ class Runner:
     def create_optimizers(self):
         self.scheduler
         hp = self.hp
-        optimizer = self.Optimizer(params=self.model.parameters(), lr=1)
+        params = filter(lambda p: p.requires_grad, self.model.parameters())
+        optimizer = self.Optimizer(params=params, lr=1)
         hp.lr.add_listener(lambda lr: self.set_lr(optimizer, self.lr_coef * lr))
         return [optimizer]
 
