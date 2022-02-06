@@ -35,11 +35,12 @@ def make_grad_dataframe(module):
     rows = []
     for name, p in module.named_parameters():
         if p.grad is not None and p.grad.numel() > 0:
+            abs_grad = p.grad.abs()
             row = dict(
                 name=name,
-                min=p.grad.min().item(),
-                max=p.grad.max().item(),
-                mean=p.grad.mean().item(),
+                abs_min=abs_grad.min().item(),
+                abs_max=abs_grad.max().item(),
+                abs_mean=abs_grad.mean().item(),
             )
             rows.append(row)
     df = pd.DataFrame(rows)
